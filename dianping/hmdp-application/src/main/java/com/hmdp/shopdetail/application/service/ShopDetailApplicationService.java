@@ -39,6 +39,9 @@ import java.util.Arrays;
 @Service
 public class ShopDetailApplicationService {
 
+    /** result_message 列宽 varchar(255) 的安全截断上限（VM 实弹验证发现的回写 Data truncation 缺陷） */
+    private static final int RESULT_MESSAGE_MAX_LENGTH = 250;
+
     /** 领域服务，负责真正的聚合规则与衍生规则。 */
     private final ShopDetailDomainService domainService;
     /** 评分刷新服务，商详返回后异步触发，不阻塞主请求。 */
@@ -169,7 +172,13 @@ public class ShopDetailApplicationService {
                 : flashPayStateMachineFacade.start(claim.getClaimNo(), String.valueOf(claim.getShopId()), payload);
         // StateEngine 执行完毕后，当前状态与最后一条节点产出的说明回写到申诉单，供用户查询申诉进度
         claim.setStatus(result.getCurrentState());
-        claim.setResultMessage(result.getLastMessage());
+        // 截断保护（VM 实弹发现的存量缺陷）：转人工/审计异常等错误消息携带 JDBC 驱动文本，
+        // 可超过 result_message varchar(255) 列宽，导致回写本身抛 Data truncation、申诉单卡死在旧状态
+        String message = result.getLastMessage();
+        if (message != null && message.length() > RESULT_MESSAGE_MAX_LENGTH) {
+            message = message.substring(0, RESULT_MESSAGE_MAX_LENGTH);
+        }
+        claim.setResultMessage(message);
         // 把引擎回写的状态持久化到 DB，保证下次查询 / 重试能读到最新状态
         return domainService.updateClaim(claim);
     }
