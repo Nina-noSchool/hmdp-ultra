@@ -5,6 +5,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -41,12 +42,17 @@ public class CacheClient {
     /**
      * 缓存重建线程池 —— 逻辑过期模式下，重建缓存是耗时 IO 操作，
      * 不能阻塞业务请求线程，所以放到独立线程池异步做。
-     * 固定 10 线程足够应对热点 key 同时过期的场景。
+     * 虚拟线程开关（docs/VIRTUAL-THREADS.md）开启时切换为 per-task executor；
+     * 关闭时维持固定 10 线程历史行为。
      */
-    private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);
+    private final ExecutorService cacheRebuildExecutor;
 
-    public CacheClient(StringRedisTemplate stringRedisTemplate) {
+    public CacheClient(StringRedisTemplate stringRedisTemplate,
+            @Value("${concurrency.virtual-threads.enabled:false}") boolean virtualThreadsEnabled) {
         this.stringRedisTemplate = stringRedisTemplate;
+        this.cacheRebuildExecutor = virtualThreadsEnabled
+                ? Executors.newVirtualThreadPerTaskExecutor()
+                : Executors.newFixedThreadPool(10);
     }
 
     /**
@@ -197,7 +203,7 @@ public class CacheClient {
         boolean isLock = tryLock(lockKey);
         if (isLock) {
             // ⑤ 拿到锁 → 异步线程重建（不阻塞当前业务线程）
-            CACHE_REBUILD_EXECUTOR.submit(() -> {
+            cacheRebuildExecutor.submit(() -> {
                 try {
                     R newData = dbFallback.apply(id);
                     this.setWithLogicalExpire(key, newData, time, unit);

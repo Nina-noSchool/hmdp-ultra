@@ -11,6 +11,7 @@ import com.hmdp.service.impl.OrderCreateRecoveryService;
 import com.hmdp.service.impl.RollbackFailureService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PostConstruct;
 import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
 import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyStatus;
 import org.apache.rocketmq.client.consumer.listener.MessageListenerConcurrently;
@@ -18,13 +19,17 @@ import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
 import org.apache.rocketmq.spring.core.RocketMQListener;
 import org.apache.rocketmq.spring.core.RocketMQPushConsumerLifecycleListener;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -70,14 +75,33 @@ public class SeckillPlusOrderListener implements RocketMQListener<String>, Rocke
     private final RollbackFailureService rollbackFailureService;
     private final MetricsRecorder metricsRecorder;
 
-    /** 订单处理线程池 — 核心线程数=CPU核数，最大=2倍CPU核数，有界队列1024，拒绝策略CallerRuns */
-    private final ThreadPoolExecutor executor = new ThreadPoolExecutor(
-            Runtime.getRuntime().availableProcessors(),
-            Runtime.getRuntime().availableProcessors() * 2,
-            60, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(1024),
-            new ThreadPoolExecutor.CallerRunsPolicy()
-    );
+    /** 虚拟线程开关（见 docs/VIRTUAL-THREADS.md）：默认 false 维持平台线程池历史行为 */
+    @Value("${concurrency.virtual-threads.enabled:false}")
+    private boolean virtualThreadsEnabled;
+
+    /** 订单处理线程池 — 核心线程数=CPU核数，最大=2倍CPU核数，有界队列1024，拒绝策略CallerRuns；
+     *  虚拟线程模式下换成 per-task executor，并发上限由 consumePermits 信号量保护 */
+    private ExecutorService executor;
+
+    /** 虚拟线程模式的并发上限（保护 DB 连接池；平台模式为 null 不生效） */
+    private Semaphore consumePermits;
+
+    @PostConstruct
+    void initExecutor() {
+        if (virtualThreadsEnabled) {
+            this.executor = Executors.newVirtualThreadPerTaskExecutor();
+            this.consumePermits = new Semaphore(16);
+            log.info("seckill order listener using virtual threads with semaphore permits=16");
+        } else {
+            this.executor = new ThreadPoolExecutor(
+                    Runtime.getRuntime().availableProcessors(),
+                    Runtime.getRuntime().availableProcessors() * 2,
+                    60, TimeUnit.SECONDS,
+                    new LinkedBlockingQueue<>(1024),
+                    new ThreadPoolExecutor.CallerRunsPolicy()
+            );
+        }
+    }
 
     /** 单条消息处理入口（Spring RocketMQ 回调） */
     @Override
@@ -230,6 +254,10 @@ public class SeckillPlusOrderListener implements RocketMQListener<String>, Rocke
      */
     @Override
     public void prepareStart(DefaultMQPushConsumer consumer) {
+        // 懒初始化兜底：生产环境 @PostConstruct 已按开关建池；直 new（单测）未走 PostConstruct，此处补齐为平台池
+        if (executor == null) {
+            initExecutor();
+        }
         // ① 设置批量拉取上限：默认 1，改成 32，一次和 Broker 交互拿更多消息
         consumer.setConsumeMessageBatchMaxSize(32);
 

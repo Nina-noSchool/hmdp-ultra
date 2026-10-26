@@ -39,7 +39,8 @@ class CacheClientLoadOnMissTest {
         redisTemplate = mock(StringRedisTemplate.class);
         valueOps = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        client = new CacheClient(redisTemplate);
+        // 平台线程模式（开关关）：本测试只验证 loadOnMiss 语义，与线程池实现无关
+        client = new CacheClient(redisTemplate, false);
     }
 
     @Test
