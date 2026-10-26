@@ -89,9 +89,11 @@ public class SeckillPlusOrderListener implements RocketMQListener<String>, Rocke
     @PostConstruct
     void initExecutor() {
         if (virtualThreadsEnabled) {
+            // 许可数=8（与平台模式有效并发对齐）：秒杀建单事务串行竞争同一行库存记录的
+            // InnoDB 行锁，虚拟线程放开到 16 会触发 Lock wait timeout（VM 实测），必须限到平台同级
             this.executor = Executors.newVirtualThreadPerTaskExecutor();
-            this.consumePermits = new Semaphore(16);
-            log.info("seckill order listener using virtual threads with semaphore permits=16");
+            this.consumePermits = new Semaphore(8);
+            log.info("seckill order listener using virtual threads with semaphore permits=8");
         } else {
             this.executor = new ThreadPoolExecutor(
                     Runtime.getRuntime().availableProcessors(),
@@ -265,9 +267,28 @@ public class SeckillPlusOrderListener implements RocketMQListener<String>, Rocke
         consumer.setMessageListener((MessageListenerConcurrently) (msgs, context) -> {
             List<CompletableFuture<Void>> futures = new ArrayList<>(msgs.size());
 
-            // 逐条包装成异步任务，丢进自建线程池并发执行
+            // 逐条包装成异步任务，丢进自建线程池并发执行；
+            // 虚拟线程模式必须先拿信号量许可（平台模式 consumePermits=null 直接放行）——
+            // 不限并发时 4000 个建单事务同时竞争同一行库存记录的 InnoDB 行锁，
+            // 会触发 Lock wait timeout（VM 实测），这是虚拟模式接入的核心保护
             for (MessageExt msg : msgs) {
-                futures.add(CompletableFuture.runAsync(() -> processMessage(msg), executor));
+                futures.add(CompletableFuture.runAsync(() -> {
+                    if (consumePermits != null) {
+                        try {
+                            consumePermits.acquire();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException("interrupted while acquiring consume permit", e);
+                        }
+                    }
+                    try {
+                        processMessage(msg);
+                    } finally {
+                        if (consumePermits != null) {
+                            consumePermits.release();
+                        }
+                    }
+                }, executor));
             }
 
             // ③ 阻塞等待所有任务完成 —— 用索引循环，方便异常时拿到对应的原始消息

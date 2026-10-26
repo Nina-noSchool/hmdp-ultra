@@ -10,6 +10,7 @@ set -e
 THREADS=${1:-1000}
 RAMPUP=${2:-2}
 VOUCHER_ID=${3:-13}
+APP_PORT=${APP_PORT:-8081}
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 JMETER_HOME="${HOME}/java项目/apache-jmeter-5.6.3"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -34,7 +35,7 @@ echo ""
 echo "[0/4] 环境检查..."
 
 # 检查应用是否运行
-APP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8081/voucher-order/seckill-plus/${VOUCHER_ID}" 2>/dev/null || echo "000")
+ APP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:${APP_PORT}/voucher-order/seckill-plus/${VOUCHER_ID}" 2>/dev/null || echo "000")
 if [ "$APP_STATUS" = "000" ]; then
   echo "  [FAIL] 应用未启动，请先启动 spring-boot:run"
   exit 1
@@ -124,7 +125,7 @@ cat > ${JMX_FILE} <<JMXEOF
             <collectionProp name="Arguments.arguments"/>
           </elementProp>
           <stringProp name="HTTPSampler.domain">localhost</stringProp>
-          <stringProp name="HTTPSampler.port">8081</stringProp>
+          <stringProp name="HTTPSampler.port">${APP_PORT}</stringProp>
           <stringProp name="HTTPSampler.protocol">http</stringProp>
           <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
           <stringProp name="HTTPSampler.path">/voucher-order/seckill-plus/${VOUCHER_ID}</stringProp>
