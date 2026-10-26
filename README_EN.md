@@ -6,8 +6,8 @@
 
 A **deeply customized learning project** based on **Heima Dianping** (a Yelp-like local lifestyle platform)
 
-![Java](https://img.shields.io/badge/Java-8%2B-orange)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.x-green)
+![Java](https://img.shields.io/badge/Java-21-orange)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-green)
 ![Redis](https://img.shields.io/badge/Redis-Lettuce-red)
 ![RocketMQ](https://img.shields.io/badge/RocketMQ-Async%20Architecture-blue)
 ![MySQL](https://img.shields.io/badge/MySQL-8.x-yellow)
@@ -56,7 +56,7 @@ The original project solved the "from 0 to 1" problem — seckill, caching, chec
 - **Two-layer abstraction**: the engine layer has zero business awareness (payload is a plain string), while the business layer only implements StateNode
 - **Checkpoint-resumable persistence**: StateTask + StateTransitionLog are fully persisted (SPI extension point; in-memory / MyBatis implementations are switchable)
 - **Layered failure policies**: FailurePolicy (business layer: should we retry?) + RetryPolicy (engine layer: how many retries are left?); non-retryable failures escalate to human review automatically
-- **Applied scenario**: worry-free flash-compensation claim flow (SUBMITTED → APPROVED → COMPLETED / MANUAL_REVIEW)
+- **Applied scenario**: worry-free flash-compensation claim flow (SUBMITTED → APPROVED amount calculation + payment → COMPLETED receipt/audit/notification / MANUAL_REVIEW); payment, audit and notification are SPI extension points with the claim number as the payment idempotency key
 
 ### 🧠 Multi-Level Cache and Invalidation Broadcast
 
@@ -144,10 +144,11 @@ sequenceDiagram
 
 | Layer | Technologies |
 |---|---|
-| Framework | Spring Boot, Spring MVC, Spring AOP/Transactions |
-| Data Access | MyBatis-Plus, MySQL 8 |
+| Runtime | **JDK 21** (migrated from JDK 8, see [docs/MIGRATION-JDK21.md](docs/MIGRATION-JDK21.md)) |
+| Framework | **Spring Boot 3.2**, Spring MVC, Spring AOP/Transactions |
+| Data Access | MyBatis-Plus 3.5 (spring-boot3-starter), MySQL 8 (mysql-connector-j) |
 | Caching | Redis (Lettuce connection pool), Redisson, Caffeine (L1 local cache) |
-| Message Queue | RocketMQ (synchronous sending, delayed messages, batch consumption) |
+| Message Queue | RocketMQ (rocketmq-spring 2.3.1: synchronous sending, delayed messages, batch consumption) |
 | Docs/Tooling | Lombok, Hutool, Spring Boot Actuator + Prometheus |
 | Quality | JMeter load testing, Arthas diagnostics, JUnit |
 
@@ -174,7 +175,7 @@ dianping
 
 ### Prerequisites
 
-- JDK 8+, Maven 3.6+
+- **JDK 21+**, Maven 3.6+ (Boot 3.2 cannot run on JDK 8; the pre-migration JDK 8 version lives in git history)
 - MySQL 8.x (database name `dingping`; table-creation SQL is `hmdp.sql` in the course materials)
 - Redis 5+ (database 1)
 - RocketMQ 4.9+ (NameServer defaults to `127.0.0.1:9876`; when running locally without MQ, you can enable the Mock producer in `MockRocketMQConfig`)

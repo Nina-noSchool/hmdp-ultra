@@ -6,8 +6,8 @@
 
 一个基于**黑马点评**（大众点评类本地生活平台）的**深度魔改学习项目**
 
-![Java](https://img.shields.io/badge/Java-8%2B-orange)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.x-green)
+![Java](https://img.shields.io/badge/Java-21-orange)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-green)
 ![Redis](https://img.shields.io/badge/Redis-Lettuce-red)
 ![RocketMQ](https://img.shields.io/badge/RocketMQ-异步架构-blue)
 ![MySQL](https://img.shields.io/badge/MySQL-8.x-yellow)
@@ -27,6 +27,7 @@
 - **代码怎么不失控**：自研可编排任务链引擎与 CBB 状态机引擎，把编排逻辑从业务逻辑中彻底剥离
 - **数据一致性怎么保证**：Redis 预扣 + RocketMQ 异步建单 + 本地消息表 / 建单校验 / 恢复任务 / 对账补偿的四级可靠性兜底
 - **线上问题怎么排查**：7 类 JVM 故障注入开关 + JMeter 压测 + Prometheus 指标 + Arthas 定位闭环
+- **技术栈怎么演进**：JDK 8 → 21、Spring Boot 2.3 → 3.2（jakarta 全量迁移），106 单测全绿 + VM 并行部署验证——[迁移实录](docs/MIGRATION-JDK21.md)
 
 ---
 
@@ -56,7 +57,7 @@
 - **双层抽象**：引擎层零业务感知（payload 纯字符串），业务层只实现 StateNode
 - **断点续传式持久化**：StateTask + StateTransitionLog 全部落库（SPI 扩展点，内存实现 / MyBatis 实现可切换）
 - **失败策略分层**：FailurePolicy（业务层：该不该重试）+ RetryPolicy（引擎层：还剩几次），不可重试自动转人工
-- **落地场景**：无忧闪赔赔付流程（SUBMITTED → APPROVED → COMPLETED / MANUAL_REVIEW）
+- **落地场景**：无忧闪赔赔付流程（SUBMITTED → APPROVED 算金额+调支付 → COMPLETED 查回执/写审计/发通知 / MANUAL_REVIEW）；支付、审计、通知均为 SPI 扩展点，支付以赔付单号为幂等键，失败统一转人工
 
 ### 🧠 多级缓存与失效广播
 
@@ -145,10 +146,11 @@ sequenceDiagram
 
 | 层次 | 技术 |
 |---|---|
-| 框架 | Spring Boot、Spring MVC、Spring AOP/事务 |
-| 数据访问 | MyBatis-Plus、MySQL 8 |
+| 运行时 | **JDK 21**（由 JDK 8 迁移，实录见 [docs/MIGRATION-JDK21.md](docs/MIGRATION-JDK21.md)） |
+| 框架 | **Spring Boot 3.2**、Spring MVC、Spring AOP/事务 |
+| 数据访问 | MyBatis-Plus 3.5（spring-boot3-starter）、MySQL 8（mysql-connector-j） |
 | 缓存 | Redis（Lettuce 连接池）、Redisson、Caffeine（L1 本地缓存） |
-| 消息队列 | RocketMQ（同步发送、延时消息、批量消费） |
+| 消息队列 | RocketMQ（rocketmq-spring 2.3.1：同步发送、延时消息、批量消费） |
 | 文档/工具 | Lombok、Hutool、Spring Boot Actuator + Prometheus |
 | 质量 | JMeter 压测、Arthas 诊断、JUnit |
 
@@ -175,8 +177,8 @@ dianping
 
 ### 环境依赖
 
-- JDK 8+、Maven 3.6+
-- MySQL 8.x（库名 `dingping`，建表 SQL 见课程资料 `hmdp.sql`）
+- **JDK 21+**、Maven 3.6+（Boot 3.2 无法在 JDK 8 运行；迁移前的 JDK 8 版本见 git 历史）
+- MySQL 8.x（库名 `dingping`，建表 SQL 见课程资料 `hmdp.sql`；闪赔审计表补丁见 `db/patch_payout_audit_log.sql`）
 - Redis 5+（database 1）
 - RocketMQ 4.9+（NameServer 默认 `127.0.0.1:9876`；本地无 MQ 时可启用 `MockRocketMQConfig` 的 Mock 生产者）
 
