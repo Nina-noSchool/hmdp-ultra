@@ -9,7 +9,7 @@ import com.hmdp.shoprating.domain.model.ShopRatingRefreshMessage;
 import com.hmdp.utils.MultiLevelCacheService;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 import static com.hmdp.utils.RedisConstants.CACHE_SHOP_KEY;
 

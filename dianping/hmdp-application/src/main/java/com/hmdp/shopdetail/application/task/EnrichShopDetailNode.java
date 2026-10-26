@@ -9,7 +9,7 @@ import com.hmdp.shared.domain.taskchain.model.TaskContext;
 import com.hmdp.shared.domain.taskchain.model.TaskNodeHandler;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 /**
  * 任务链节点：丰富商详聚合根

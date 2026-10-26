@@ -30,12 +30,13 @@ class MybatisStateTaskRepositoryTest {
 
     @Test
     void save_should_swallow_duplicate_key_on_concurrent_start() {
-        when(mapper.insert(any())).thenThrow(new DuplicateKeyException("uk_task_id"));
+        // MP 3.5.7 的 BaseMapper 有 insert(T) 与 insert(Collection) 两个重载，any() 必须指定类型
+        when(mapper.insert(any(com.hmdp.shared.infrastructure.persistence.dataobject.StateTask.class))).thenThrow(new DuplicateKeyException("uk_task_id"));
 
         StateTask task = StateTask.create("claim-1", "shop-1", "FLASH_PAY", "SUBMITTED", "FLASH_PAY|reason");
 
         assertDoesNotThrow(() -> repository.save(task));
-        verify(mapper).insert(any());
+        verify(mapper).insert(any(com.hmdp.shared.infrastructure.persistence.dataobject.StateTask.class));
     }
 
     @Test
@@ -47,7 +48,7 @@ class MybatisStateTaskRepositoryTest {
         existing.setTaskId("claim-1");
         existing.setRuntimeStatus("PENDING");
         when(mapper.selectOne(any())).thenReturn(null, existing);
-        when(mapper.insert(any())).thenThrow(new DuplicateKeyException("uk_task_id"));
+        when(mapper.insert(any(com.hmdp.shared.infrastructure.persistence.dataobject.StateTask.class))).thenThrow(new DuplicateKeyException("uk_task_id"));
         when(mapper.update(isNull(), any())).thenReturn(1);
 
         StateTask task = StateTask.create("claim-1", "shop-1", "FLASH_PAY", "SUBMITTED", "FLASH_PAY|reason");
@@ -70,7 +71,8 @@ class MybatisStateTaskRepositoryTest {
         StateTask task = StateTask.create("claim-1", "shop-1", "FLASH_PAY", "SUBMITTED", "FLASH_PAY|reason");
         repository.update(task);
 
-        verify(mapper, never()).insert(any());
+        verify(mapper, never()).insert(any(com.hmdp.shared.infrastructure.persistence.dataobject.StateTask.class));
         verify(mapper).update(isNull(), any());
     }
 }
+

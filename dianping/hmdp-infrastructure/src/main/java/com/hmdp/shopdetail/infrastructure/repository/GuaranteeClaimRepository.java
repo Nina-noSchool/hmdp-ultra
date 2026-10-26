@@ -5,7 +5,7 @@ import com.hmdp.shopdetail.domain.model.GuaranteeClaim;
 import com.hmdp.shopdetail.infrastructure.persistence.mapper.GuaranteeClaimMapper;
 import org.springframework.stereotype.Repository;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.Optional;
 
 /**

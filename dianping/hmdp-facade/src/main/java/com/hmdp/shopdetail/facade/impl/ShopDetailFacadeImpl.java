@@ -6,7 +6,7 @@ import com.hmdp.shopdetail.domain.model.ShopDetailAggregate;
 import com.hmdp.shopdetail.facade.ShopDetailFacade;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 /**
  * 店铺详情门面实现

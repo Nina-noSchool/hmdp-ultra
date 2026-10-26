@@ -5,7 +5,7 @@ import com.hmdp.shared.stateengine.model.StateTransitionLog;
 import com.hmdp.shared.stateengine.spi.StateTransitionLogRepository;
 import org.springframework.stereotype.Repository;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 /**
  * 状态机转换日志仓储 MyBatis 实现

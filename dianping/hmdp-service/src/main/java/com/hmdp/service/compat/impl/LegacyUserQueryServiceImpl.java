@@ -5,7 +5,7 @@ import com.hmdp.service.compat.LegacyUserQueryService;
 import com.hmdp.service.impl.UserServiceImpl;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 @Service
 public class LegacyUserQueryServiceImpl implements LegacyUserQueryService {
