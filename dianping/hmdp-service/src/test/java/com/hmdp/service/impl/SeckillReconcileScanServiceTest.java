@@ -43,7 +43,7 @@ class SeckillReconcileScanServiceTest {
         when(orderMapper.selectList(any())).thenReturn(Collections.singletonList(order));
         when(logMapper.selectOne(any())).thenReturn(null);
         when(logMapper.selectList(any())).thenReturn(Collections.emptyList());
-        when(taskMapper.selectCount(any())).thenReturn(0);
+        when(taskMapper.selectCount(any())).thenReturn(0L);
 
         service.scanRecentRecords();
 
@@ -66,7 +66,7 @@ class SeckillReconcileScanServiceTest {
         when(orderMapper.selectList(any())).thenReturn(Collections.singletonList(order));
         when(logMapper.selectOne(any())).thenReturn(null);
         when(logMapper.selectList(any())).thenReturn(Collections.emptyList());
-        when(taskMapper.selectCount(any())).thenReturn(1);
+        when(taskMapper.selectCount(any())).thenReturn(1L);
 
         service.scanRecentRecords();
 
@@ -92,7 +92,7 @@ class SeckillReconcileScanServiceTest {
         when(logMapper.selectList(any())).thenReturn(Collections.singletonList(deductLog));
         when(orderMapper.selectById(101L)).thenReturn(null);
         when(logMapper.selectOne(any())).thenReturn(null);
-        when(taskMapper.selectCount(any())).thenReturn(0);
+        when(taskMapper.selectCount(any())).thenReturn(0L);
 
         service.scanRecentRecords();
 
