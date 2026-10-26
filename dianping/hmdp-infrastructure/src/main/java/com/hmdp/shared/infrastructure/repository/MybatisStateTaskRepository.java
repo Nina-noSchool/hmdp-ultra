@@ -9,7 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 /**
  * 状态机任务仓储 MyBatis 实现

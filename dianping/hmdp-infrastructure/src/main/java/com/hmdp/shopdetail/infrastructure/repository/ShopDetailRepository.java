@@ -10,7 +10,7 @@ import com.hmdp.shopdetail.domain.model.ShopMarketingOffer;
 import com.hmdp.shopdetail.domain.model.ShopVisitBlog;
 import org.springframework.stereotype.Repository;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;

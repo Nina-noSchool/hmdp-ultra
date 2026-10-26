@@ -9,7 +9,7 @@ import com.hmdp.shoprating.domain.model.ShopRatingRefreshMessage;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.concurrent.TimeUnit;
 
 import static com.hmdp.utils.RedisConstants.SHOP_RATING_REFRESH_TS_KEY;

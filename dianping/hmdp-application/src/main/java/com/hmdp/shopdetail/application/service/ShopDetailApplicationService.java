@@ -52,7 +52,7 @@ public class ShopDetailApplicationService {
     @Autowired(required = false)
     private FlashPayStateMachineFacade flashPayStateMachineFacade;
 
-    @javax.annotation.Resource
+    @jakarta.annotation.Resource
     private IShopService shopService;
 
     /**

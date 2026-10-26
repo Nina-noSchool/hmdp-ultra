@@ -10,7 +10,7 @@ import com.hmdp.shared.domain.taskchain.model.TaskNodeHandler;
 import com.hmdp.shoprating.domain.model.ShopRatingRefreshMessage;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 
 @Component
 @TaskNode(

@@ -9,7 +9,7 @@ import com.hmdp.service.impl.VoucherServiceImpl;
 import com.hmdp.utils.SystemConstants;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.util.Collections;
 import java.util.List;
 

@@ -10,15 +10,14 @@ import com.hmdp.entity.UserInfo;
 import com.hmdp.service.IUserInfoService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.UserHolder;
-import io.reactivex.Single;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
-import javax.annotation.Resource;
-import javax.servlet.http.HttpSession;
+import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpSession;
 
 /**
  * 用户控制器

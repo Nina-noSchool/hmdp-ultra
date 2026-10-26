@@ -13,7 +13,7 @@ import com.hmdp.utils.UserHolder;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Resource;
+import jakarta.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
@@ -69,7 +69,8 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
     public Result isFollow(Long followUserId) {
         Long userId = UserHolder.getUser().getId();
         //1.查询是否关注select* from tb_follow where user_id=？ and follow_id=?
-        Integer count = query().eq("user_id", userId).eq("follow_user_id", followUserId).count();
+        // MyBatis-Plus 3.5 起 count() 返回 Long
+        long count = query().eq("user_id", userId).eq("follow_user_id", followUserId).count();
             return Result.ok(count>0);
 
     }
