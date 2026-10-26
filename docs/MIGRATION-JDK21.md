@@ -145,3 +145,46 @@
 - 原仓库在迁移期间只接受两种操作：`git fetch`、读文件；任何修复继续走 main 的正常流程（迁移分支定期 rebase/merge main 保持同步）；
 - VM 副本应用端口 8082 + 独立日志文件，与原应用（8081）并行；
 - GitHub 默认分支在 Phase 8 之前保持 main——展示面在合并前不发生变化。
+
+---
+
+## 7. 迁移实录（2026-10-27 执行完成）
+
+### 7.1 实际执行轨迹
+
+| Phase | Commit | 实际结果 |
+|---|---|---|
+| 0 | `9a816c8` | 分支 + worktree + 本规格书；main 全程未动 ✅ |
+| 1 | `5b2aedd` | pom 升级；**R-1 解除**：rocketmq-spring 2.3.1（2024-07）官方支持 Spring Boot 3.x（jakarta）✅ |
+| 2 | `8b4d00c` | javax→jakarta 54 文件（含 1 处全限定 `@javax.annotation.Resource` 漏网）；全 10 模块 release 21 编译通过 ✅ |
+| 3 | `5e92a75` | 测试适配；**JDK21 运行时全量 106 测试全绿**（27/47/10/2/1/6/10/3，与 JDK8 基线逐模块一致）✅ |
+| 4 | `d13ef28` | 配置属性迁移（yaml + RedissonConfig `@Value`）✅ |
+| 5 | — | 本机起应用跳过（VM 中间件端口不对局域网开放），并入 Phase 6 直接 VM 验证 |
+| 6 | （本 commit） | VM 并行部署 + 冒烟全过，见 §7.3 ✅ |
+
+### 7.2 实际踩坑（与预想差异）
+
+1. **R-1 从"最高风险"降为"零风险"**：rocketmq-spring 2.3.0（2024-02）官方声明 Support SpringBoot 3.x，2.3.1 修补——三级预案一档都没用上。
+2. **MP 3.4→3.5 的真实差异只有两类**：① `count()` 返回 `int`→`Long`（主代码 2 处 + 测试 3 处 selectCount 打桩）；② `BaseMapper` 新增 `insert(Collection<T>)` 重载，导致 Mockito 裸 `any()` 编译歧义（指定 DO 类型即解）。
+3. **旧 redisson 的传递依赖消失**：redisson 3.13.6 曾传递 `io.reactivex.rxjava2`，UserController 有一个从未使用的死 import 因此暴露——删除（3.27.2 不再携带）。
+4. **运行时 JDK 与编译 JDK 要分清**：Mockito 5.7（Boot3.2 托管）的 ByteBuddy 不认识 JDK25 的 class file 69——**测试必须用 JDK21 跑**，用更新 JDK 跑会爆 mock 创建错误（与代码无关）。
+5. **snakeyaml 2 的 no-arg 构造器保留**（仅标注 deprecated）：规格书预想的 `new Yaml(new LoaderOptions())` 改造实际不需要。
+6. **RedissonConfig 的 `@Value` 用的是属性路径而非 BOM 对象**：`spring.redis.*` → `spring.data.redis.*` 的改名在 Java 代码里也有一份，规格书只列了 yaml——属性改名类风险要 grep 代码。
+7. **VM 的 JDK21 一条命令装好**：`dnf install java-21-openjdk`（Rocky9 官方源 21.0.12.1.1）。
+8. **冷启动第一发请求必失败是既有现象**（MQ producer 首连超时 / Lua 首调 declined），JDK8 原版同样存在，与迁移无关；本地消息表 30s 重发自愈。
+
+### 7.3 VM 验收证据（2026-10-27，rocky9-dev）
+
+- 并行部署：8081（JDK8 原版）+ 8082（JDK21 副本，`start-app-jdk21.sh`，独立日志 `app-jdk21.log`），39s 双双 health UP；
+- 详情页（8082）：3 连发 200，首发 154ms 回源后 L1 命中（`hmdp_cache_local_hits_total` 2.0→3.0）；
+- **指标端点有数据**（R-5 验证）：`/actuator/prometheus` 返回 9 个 `hmdp_*` 指标——属性改名无一遗漏；
+- 单发秒杀（8082）：订单号返回，三方一致（redis_stock 3999 / redis_orders 1 / db_orders 1 / db_stock 3999）；
+- **JDK21 消费者独立验证**：停掉 8081 后单发 → 订单落库，`app-jdk21.log` 出现 "seckill plus order created"——rocketmq-spring 2.3.1 的 Listener 容器在新栈真实工作；
+- MQ 健康：`tb_mq_event_record` 仅 SENT，无 FAILED 残留；
+- 原应用隔离：8081 全程健康，main 分支零改动。
+
+### 7.4 遗留与可选实验（不阻塞合并）
+
+- Phase 7 附加实验未做：虚拟线程开关（`spring.threads.virtual.enabled=true`）+ JDK8 vs JDK21 同机 R1 对比——后续想做随时可加；
+- 简历技术栈行同步（JDK21 / Boot3.2）待项目主人自行更新；
+- 8082 副本应用当前仍在 VM 上运行（与 8081 并行），不需要时 `kill $(cat app-jdk21.pid)` 即可。
