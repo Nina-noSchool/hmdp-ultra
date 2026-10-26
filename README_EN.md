@@ -17,7 +17,7 @@ A **deeply customized learning project** based on **Heima Dianping** (a Yelp-lik
 ![Arthas](https://img.shields.io/badge/Arthas-Diagnostics-red)
 
 ![Seckill](https://img.shields.io/badge/Seckill-4000%20Concurrent%20%C2%B7%20Zero%20Oversell-success)
-![GitHub stars](https://img.shields.io/github/stars/Atomsk-m4lu/hmdp-ultra?style=social&label=Stars)
+![GitHub stars](https://img.shields.io/github/stars/Nina-noSchool/hmdp-ultra?style=social&label=Stars)
 
 </div>
 

@@ -3,7 +3,7 @@
 Prometheus 指标报告生成器
 用法: python3 generate_metrics_report.py <start_epoch_ms> <end_epoch_ms> <output_dir>
 """
-import sys, json, os
+import sys, json, os, pathlib
 from datetime import datetime, timezone, timedelta
 from urllib.request import urlopen, Request
 from urllib.parse import urlencode, urlparse
@@ -240,7 +240,7 @@ h1 {{ text-align: center; margin-bottom: 8px; font-size: 24px; }}
 </body>
 </html>"""
 
-    report_path = os.path.join(out_dir, "metrics-report.html")
+    report_path = os.path.realpath(os.path.join(out_dir, "metrics-report.html"))
     with open(report_path, "w") as f:
         f.write(html)
     print(f"\nReport saved: {report_path}")

@@ -17,7 +17,7 @@
 ![Arthas](https://img.shields.io/badge/Arthas-诊断-red)
 
 ![Seckill](https://img.shields.io/badge/秒杀-4000并发·零超卖-success)
-![GitHub stars](https://img.shields.io/github/stars/Atomsk-m4lu/hmdp-ultra?style=social&label=Stars)
+![GitHub stars](https://img.shields.io/github/stars/Nina-noSchool/hmdp-ultra?style=social&label=Stars)
 
 </div>
 
