@@ -25,19 +25,20 @@ spring:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:dingping}?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
     username: ${DB_USER:root}
     password: ${DB_PASSWORD}
-  redis:
-    host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:6379}
-    password: ${REDIS_PASSWORD}
-    database: ${REDIS_DATABASE:1}
-    timeout: 3000ms
-    lettuce:
-      pool:
-        max-active: 30
-        max-idle: 15
-        min-idle: 5
-        max-wait: -1ms
-        time-between-eviction-runs: 10s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+      database: ${REDIS_DATABASE:1}
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 30
+          max-idle: 15
+          min-idle: 5
+          max-wait: -1ms
+          time-between-eviction-runs: 10s
   jackson:
     default-property-inclusion: non_null
 
@@ -64,10 +65,11 @@ management:
       exposure:
         include: health,info,prometheus
       base-path: /actuator
-  metrics:
-    export:
-      prometheus:
+  prometheus:
+    metrics:
+      export:
         enabled: true
+  metrics:
     tags:
       application: ${spring.application.name}
 
