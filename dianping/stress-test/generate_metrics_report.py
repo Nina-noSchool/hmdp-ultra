@@ -33,6 +33,11 @@ METRICS = [
     ("Young GC 耗时", "gauge", "rate(jvm_gc_pause_seconds_sum{application=\"hmdp\",action=\"end of minor GC\"}[1m]) * 1000", "ms", 2),
     ("Full GC 频率", "gauge", "sum(rate(jvm_gc_pause_seconds_count{application=\"hmdp\",action=\"end of major GC\"}[1m])) * 60", "short", 1),
     ("Full GC 耗时", "gauge", "rate(jvm_gc_pause_seconds_sum{application=\"hmdp\",action=\"end of major GC\"}[1m]) * 1000", "ms", 2),
+    # 连接池排队是"瓶颈在下游"的直接证据；虚拟线程模式下应重点观察
+    ("Hikari 等待连接", "gauge", "max(hikaricp_connections_pending{application=\"hmdp\"})", "short", 0),
+    ("Hikari 活跃连接", "gauge", "max(hikaricp_connections_active{application=\"hmdp\"})", "short", 0),
+    # Boot 3.x 叫 jvm_threads_live_threads，Boot 2.3（col1 老栈）叫 jvm_threads_live，or 兼容两者
+    ("JVM 线程数", "gauge", "max(jvm_threads_live_threads{application=\"hmdp\"} or jvm_threads_live{application=\"hmdp\"})", "short", 0),
     # Counter delta metrics (exact calculation)
     ("RT (ms)", "rt", None, "ms", 1),
     ("QPS", "qps", None, "reqps", 1),

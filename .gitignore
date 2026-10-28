@@ -11,9 +11,17 @@ target/
 读懂指南-黑马点评.md
 名词详解-黑马点评.md
 面经-黑马点评.md
+面经-黑马点评-闪背版.md
+压测详解-黑马点评.md
 源码精读-黑马点评.md
+_stage/
 
 # ---- local artifacts ----
 nohup.out
 arthas-output/
 stress-test/results/
+stress-test/temp/
+dianping/stress-test/results/
+dianping/stress-test/temp/
+__pycache__/
+*.pyc

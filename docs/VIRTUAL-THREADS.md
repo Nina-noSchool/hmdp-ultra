@@ -113,25 +113,34 @@ T3（CPU 池）、T7（RocketMQ 内部）、T8（演练工具）、`RedisIdWorke
 - [ ] **日志确认虚拟线程生效**：任一请求堆栈出现 `VirtualThread[` 或 `jcmd` dump 中虚拟线程数 > 0。
 
 ### Phase C：压测对照（本项目最有含金量的产出）
-- [ ] 三列同机同参数 R1（4000/3s，每列前先 prepare）：
-  - 列 1：JDK8（已有归档 151.5/154，可不重跑，引用 10-24 复测）；
-  - 列 2：JDK21 + 开关关（新跑）；
-  - 列 3：JDK21 + 开关开（新跑）；
-- [ ] 每列记录：吞吐、Avg/p50/p99、HTTP 错误、四数一致、Lua 成功率；
-- [ ] 附加观测：`hikaricp_connections_pending`（Hikari 排队）、`jvm_threads_live`（虚拟线程模式应看到线程数飙升——这是预期不是事故）；
+- [x] 三列同机同参数 R1（4000/3s，每列 REPEATS=2，独立券预热后六轮全部 4000/4000 一致）：
+  - 列 1：JDK8（预热后 135.12/142.28 req/s；无预热冷启动的 800 次 syncSend 超时已修复）；
+  - 列 2：JDK21 + 开关关（146.82/143.25 req/s）；
+  - 列 3：JDK21 + 开关开（139.84/140.07 req/s，Avg/P50 放大 8~16 倍）；
+- [x] 每列记录：吞吐、Avg/p50/p99、HTTP 错误、四数一致、Lua 成功率、MQ发送超时计数；
+- [x] 附加观测：Hikari pending（col3-r1 尖峰 44，r2 归零）、`jvm_threads_live`
+  （虚拟模式 306→198，虚拟线程不计入该指标）；
 - [ ] R4 口径抽检一轮（命中率应与开关无关）。
 
-### Phase D：pinning 审计（R-1 风险的实证）
-- [ ] 压测负载进行中：`jcmd <pid> Thread.dump_to_file=/tmp/td.json -m:true`；
-- [ ] 检查 JSON 中虚拟线程是否钉在载体上（`pinned` / `carrier` 字段堆积）；
-- [ ] 备用手段：JVM 参数 `-Djdk.tracePinnedThreads=full`（JDK21 可用，有观测开销，勿长期挂）；
-- [ ] 重点怀疑对象：redisson 内部锁、hutool、mysql-connector-j 驱动——发现钉死堆栈记入实录。
+### Phase D：pinning 审计（R-1 风险的实证）——已完成（2026-10-28）
+- [x] col3 满载期间取证：`jcmd Thread.dump_to_file -format=json`（只见挂载中虚拟线程，
+  全部 I/O 等待中的虚拟线程已卸载不可见 → 改用 JFR profile 录制 90s）；
+- [x] **pinning 结论：R-1 不成立**。`jdk.VirtualThreadPinned` 全程仅 76 次、
+  单次 12-117ms，栈为 `parkOnCarrierThread`，量级可忽略；redisson/hutool/驱动
+  均未成为钉住热点；
+- [x] JFR 停车普查（23631 次 `ThreadPark`）：大头是 RocketMQ 客户端线程
+  （NettyClientPublicExecutor 9626）与消费者线程（8101），请求线程
+  （tomcat-handler，虚拟）仅 102 次；~8000 次 syncSend 请求线程 park 在
+  CountDownLatch2 上只有 20 次——本地 broker 响应近乎即时；
+- [x] 慢 I/O 排查：>10ms 的 SocketRead 共 1048 次全部是 MySQL 驱动（消费侧行锁
+  等待为主），MQ/Redis 慢读为 0；CPU 不饱和（执行采样 ~1160 个，热点分散）；
+- [x] 服务端 RT 实证（Prometheus 整窗加权）：col3=350-411ms vs col1/col2=32-33ms
+  ——延迟放大是服务端真实行为；顺序单发同一实例仅 4-6ms，为纯并发效应；
+- [ ] 逐跳延迟分解（Filter/各阶段 Timer 埋点）——列为后续，见 ANALYSIS 下一步。
 
 ### Phase E：交付
-- [ ] 《虚拟线程实验记录》成文（三列对比表 + pinning 结论 + 默认开关决策）；
-- [ ] 默认开关决策二选一并写明理由：
-  - 虚拟线程占优 → 默认 `true`，README 更新；
-  - 持平或劣化 → 保持默认 `false`，"评估并实测过"本身就是结论（负结果同样有面试价值）；
+- [x] 《虚拟线程实验记录》成文（三列对比表 + 默认开关决策；pinning 未做，见 4.1）；
+- [x] 默认开关决策：持平或劣化 → 保持默认 `false`（实测 Avg/P50 反而更差）；
 - [ ] Commit + 合回 main + push。
 
 ## 4. 风险登记册
@@ -144,6 +153,36 @@ T3（CPU 池）、T7（RocketMQ 内部）、T8（演练工具）、`RedisIdWorke
 | R-4 | ThreadLocal 语义（`UserHolder`）在虚拟线程上行为 | 低 | ThreadLocal 在虚拟线程完全支持；`afterCompletion` 清理逻辑不变，冒烟覆盖登录态 |
 | R-5 | @Scheduled 行为变化（Boot3.2 虚拟调度器） | 低 | fixedDelay 语义保留；冒烟看 7 个 Job 日志正常 |
 | R-6 | 吞吐无提升（瓶颈本在下游） | 中-高 | **这不是失败**：如实记录三列数字，"实测无收益 + 知道为什么"就是完整结论，默认开关保持 false |
+
+## 4.1 实测记录（2026-10-27，12G VM，预热增强版）
+
+完整分析见 `dianping/stress-test/ANALYSIS-20261027-three-columns.md`。
+每列 2 轮、独立预热券预热后，六轮全部 4000/4000 一致：
+
+| 列 | 吞吐中位 | Avg | P50 | P99 | MQ超时 |
+|---|---:|---:|---:|---:|---|
+| JDK8 老栈 | 138.7/s | ~44ms | 26ms | ~407ms | 1/轮 |
+| JDK21 + 平台线程 | 145.0/s | ~46ms | 26.5ms | ~488ms | 0 |
+| JDK21 + 虚拟线程 | 140.0/s | ~485ms | 331ms | ~2244ms | 0 |
+
+结论：
+
+- 当前”请求路径同步 syncSend + 异步 DB 消费”实现下，虚拟线程**没有吞吐收益**
+  （-3~-4%，噪声级），但 Avg/P50 被放大 **8~16 倍**；默认开关保持 `false`。
+- 机制（Phase D JFR 取证后修正）：延迟是**服务端真实**的（Prometheus 整窗加权
+  350-411ms vs 32-33ms），顺序单发同一实例仅 **4-6ms** —— 纯并发效应。
+  平台线程模式下排队发生在 Tomcat accept 队列（应用内并发仅 ~5）；虚拟模式放行
+  全部连接，请求在管线内部各异步跳板（Tomcat 分发、lettuce 命令、MQ 发送、
+  响应回写）间排队，与 RocketMQ 客户端/消费端共享 4 CPU —— **队列从 accept
+  队列搬进了处理管线内部**。已排除：pinning（76 次/12-117ms，可忽略）、
+  慢 I/O（MQ/Redis 慢读 0）、CPU 饱和（热点分散）、carrier 长期饥饿。
+- JDK8 老栈预热后与 JDK21 平台线程同档（138.7 vs 145，-4%）：此前的 800 次
+  `syncSend` 超时纯属冷 JVM 第一波效应，预热券（999）方案已实锤修复（800 → 1）。
+- 观测修正：虚拟模式下 `jvm_threads_live` **不升反降**（306 → 198，虚拟线程不
+  计入该指标，Tomcat 平台工作线程消失）；虚拟线程挂载/等待取证用 JFR
+  （`VirtualThreadPinned`/`ThreadPark`/`SocketRead`），jcmd JSON 转储只见挂载中的
+  虚拟线程，I/O 等待中的（已卸载）不可见。
+- Hikari：三列 r1 都有冷启动排队尖峰（col3 最高 44），r2 归零；DB 非持续瓶颈。
 
 ## 5. 验收清单
 

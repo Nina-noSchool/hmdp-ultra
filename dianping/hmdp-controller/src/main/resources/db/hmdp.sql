@@ -199,7 +199,8 @@ CREATE TABLE `tb_order_create_recovery_task` (
   UNIQUE KEY `uk_task_id` (`task_id`) USING BTREE,
   KEY `idx_status_next_execute_time` (`task_status`,`next_execute_time`) USING BTREE,
   KEY `idx_order_id` (`order_id`) USING BTREE,
-  KEY `idx_trace_id` (`trace_id`) USING BTREE
+  KEY `idx_trace_id` (`trace_id`) USING BTREE,
+  KEY `idx_voucher_id` (`voucher_id`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -240,7 +241,8 @@ CREATE TABLE `tb_order_create_verify_task` (
   UNIQUE KEY `uk_task_id` (`task_id`) USING BTREE,
   KEY `idx_status_next_check_time` (`task_status`,`next_check_time`) USING BTREE,
   KEY `idx_order_id` (`order_id`) USING BTREE,
-  KEY `idx_trace_id` (`trace_id`) USING BTREE
+  KEY `idx_trace_id` (`trace_id`) USING BTREE,
+  KEY `idx_voucher_id` (`voucher_id`) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT=12028 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -834,7 +836,9 @@ CREATE TABLE `tb_voucher_order` (
   `refund_time` timestamp NULL DEFAULT NULL COMMENT '退款时间',
   `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`) USING BTREE,
-  UNIQUE KEY `uk_user_voucher` (`user_id`,`voucher_id`)
+  UNIQUE KEY `uk_user_voucher` (`user_id`,`voucher_id`),
+  KEY `idx_voucher_id` (`voucher_id`) USING BTREE,
+  KEY `idx_create_time` (`create_time`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=COMPACT;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -875,7 +879,8 @@ CREATE TABLE `tb_voucher_reconcile_log` (
   KEY `idx_order_id` (`order_id`) USING BTREE,
   KEY `idx_trace_id` (`trace_id`) USING BTREE,
   KEY `idx_voucher_log_type` (`voucher_id`,`log_type`) USING BTREE,
-  KEY `idx_reconciliation_status` (`reconciliation_status`) USING BTREE
+  KEY `idx_reconciliation_status` (`reconciliation_status`) USING BTREE,
+  KEY `idx_log_type_create_time` (`log_type`,`create_time`) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT=186048 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

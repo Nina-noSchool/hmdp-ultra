@@ -1,0 +1,16 @@
+# 压测专用 profile：只统一资源基线，不改变任何业务逻辑。
+# 用法：java -jar hmdp-start.jar --spring.profiles.active=benchmark
+#
+# 为什么需要它：
+#   三列对照（JDK8 / JDK21 平台线程 / JDK21 虚拟线程）必须用同一套
+#   Hikari 连接池和日志级别，否则吞吐差异会把配置差异误读成运行时差异。
+spring:
+  datasource:
+    hikari:
+      pool-name: benchmark-pool
+      maximum-pool-size: 20
+      minimum-idle: 5
+
+logging:
+  level:
+    com.hmdp: info
