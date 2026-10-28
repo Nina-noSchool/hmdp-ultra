@@ -15,9 +15,11 @@ import com.hmdp.shopreview.dto.CreateShopReviewRequest;
 import com.hmdp.shopreview.service.ShopReviewRewardService;
 import com.hmdp.utils.CacheClient;
 import com.hmdp.utils.MultiLevelCacheService;
+import com.hmdp.utils.RedisBloomFilter;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RedisData;
 import com.hmdp.utils.SystemConstants;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.data.geo.Distance;
@@ -65,8 +67,22 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     @Resource
     private ShopReviewRewardService shopReviewRewardService;
+
+    /**
+     * 布隆前置守卫（批次4）：确定不存在的 id 在进 缓存→负缓存→DB 整条链之前就拒绝。
+     * 开关关闭（bloom.shop.enabled=false）时 Bean 不装配、字段为 null，行为与无守卫完全一致；
+     * 守卫内部 fail-open（未初始化/Redis 异常时放行），绝不误杀真实数据。
+     */
+    @Autowired(required = false)
+    private RedisBloomFilter shopBloomFilter;
+
     @Override
     public Result queryById(Long id){
+        // 布隆前置守卫：可能存在（或 fail-open 放行）才走多级缓存/负缓存/DB；确定不存在直接拒绝，
+        // 恶意随机 id 打不到缓存也打不到 DB，穿透防线从"事后兜底"前移到"事前拦截"
+        if (shopBloomFilter != null && !shopBloomFilter.mightContain(id)) {
+            return Result.fail("店铺不存在！");
+        }
         /*缓存穿透
         //Shop shop = queryWithPassThrough(id);
         //Shop shop = clientClient

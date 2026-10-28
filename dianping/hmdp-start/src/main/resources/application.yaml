@@ -106,6 +106,15 @@ cache:
   local:
     enabled: true
 
+# ===== 批次4：店铺布隆前置守卫（Redis BitMap 手写布隆；fail-open，未初始化/异常时放行） =====
+# 误判"存在"的请求落到负缓存兜底，绝不误杀真实数据；参数按店铺量级 10 万/1% 计算
+bloom:
+  shop:
+    enabled: true
+    key: "bloom:shop"
+    expected-insertions: 100000
+    fpp: 0.01
+
 # ===== 无忧闪赔赔付配置 =====
 flash-pay:
   payout-rules:
