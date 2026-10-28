@@ -4,6 +4,8 @@ import com.hmdp.entity.MqEventRecord;
 import com.hmdp.mapper.MqEventRecordMapper;
 import com.hmdp.metrics.MetricsRecorder;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.client.producer.SendCallback;
+import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
@@ -104,7 +106,18 @@ public class RocketMqReliablePublisher {
     }
 
     /**
-     * 发送延时消息 — 失败时同样DB兜底。
+     * 发送延时消息 — 请求路径异步化版本（2026-10-28）。
+     *
+     * <p>零语义变化契约：发送时机（下单时刻）、destination、延时级别、
+     * 失败兜底（persistFailure 落 tb_mq_event_record → MqEventRetryJob 重发）
+     * 全部与原 syncSend 版本一致；唯一变化是请求线程不再阻塞等 Broker ACK ——
+     * 20 分钟后才触发的备份消息没有理由占用下单 RTT（压测实证：请求路径两跳
+     * 同步 MQ 是虚拟线程模式下管线内排队的重要一环）。</p>
+     *
+     * <p>返回值语义变化：true 从"Broker 已确认"变为"已提交到客户端发送队列"。
+     * 调用方（seckillVoucherPlus 第 4 步）本就忽略返回值、失败不影响主流程
+     * （延时消息只是兜底 Job 的最后备份），因此无语义影响。
+     * 异步失败的落库兜底在 {@link SendCallback#onException} 中执行。</p>
      *
      * <p>延时级别（RocketMQ默认）：
      * 1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h
@@ -114,15 +127,43 @@ public class RocketMqReliablePublisher {
      * @param destination RocketMQ topic:tag
      * @param payload     消息体JSON
      * @param delayLevel  延时级别（1-18）
-     * @return true=发送成功，false=发送失败已DB兜底
+     * @return true=已提交发送；false=提交阶段失败（已DB兜底）
      */
     public boolean publishDelay(String eventType, String destination, String payload, int delayLevel) {
-        return doPublishDelay(eventType, destination, payload, delayLevel, true);
+        try {
+            rocketMQTemplate.asyncSend(destination,
+                    MessageBuilder.withPayload(payload)
+                            .setHeader("DELAY", delayLevel)
+                            .build(),
+                    new SendCallback() {
+                        @Override
+                        public void onSuccess(SendResult sendResult) {
+                            // 备份消息发送成功，无需处理
+                        }
+
+                        @Override
+                        public void onException(Throwable e) {
+                            log.error("rocketmq delayed async send failed, destination={}, delayLevel={}",
+                                    destination, delayLevel, e);
+                            persistFailure(eventType, destination, payload, e);
+                        }
+                    });
+            return true;
+        } catch (Exception e) {
+            log.error("rocketmq delayed async submit failed, destination={}, delayLevel={}",
+                    destination, delayLevel, e);
+            persistFailure(eventType, destination, payload, e);
+            return false;
+        }
     }
 
     /**
      * 延时消息重发（重试场景专用）：失败不重复落库，状态由原记录承载，
      * 且必须保留 delayLevel —— 普通 syncSend 会立刻投递，丢掉延时语义。
+     *
+     * <p>刻意保持 syncSend：重试路径是低频后台行为（MqEventRetryJob 每 30s），
+     * 阻塞无碍；且 Job 依赖同步返回值维护原记录状态 —— 异步化会让
+     * "返回 true 但实际失败"的窗口丢失重试机会，破坏重试语义。</p>
      *
      * @return true=发送成功；false=发送失败且不落库
      */
@@ -154,7 +195,7 @@ public class RocketMqReliablePublisher {
      * <p>初始重试时间设为30秒后，retryCount=0，
      * 由 MqEventRetryJob 按固定 30 秒间隔重发（不做指数退避）。</p>
      */
-    private void persistFailure(String eventType, String destination, String payload, Exception e) {
+    private void persistFailure(String eventType, String destination, String payload, Throwable e) {
         metricsRecorder.incMqEventPersisted();
         MqEventRecord record = new MqEventRecord()
                 .setEventType(eventType)

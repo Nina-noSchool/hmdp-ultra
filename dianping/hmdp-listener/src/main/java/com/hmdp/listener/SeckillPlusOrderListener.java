@@ -9,6 +9,7 @@ import com.hmdp.service.IVoucherOrderService;
 import com.hmdp.service.VoucherOrderCreateResult;
 import com.hmdp.service.impl.OrderCreateRecoveryService;
 import com.hmdp.service.impl.RollbackFailureService;
+import com.hmdp.service.impl.SeckillOrderBatchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import jakarta.annotation.PostConstruct;
@@ -19,6 +20,7 @@ import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
 import org.apache.rocketmq.spring.core.RocketMQListener;
 import org.apache.rocketmq.spring.core.RocketMQPushConsumerLifecycleListener;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -78,6 +80,18 @@ public class SeckillPlusOrderListener implements RocketMQListener<String>, Rocke
     /** 虚拟线程开关（见 docs/VIRTUAL-THREADS.md）：默认 false 维持平台线程池历史行为 */
     @Value("${concurrency.virtual-threads.enabled:false}")
     private boolean virtualThreadsEnabled;
+
+    /**
+     * 批量建单快路径开关（默认 false = 单笔链路历史行为不变）。
+     * 开启后整批消息在一个事务里完成"库存一次扣 N + 订单/对账日志批量写入"，
+     * 快路径任何异常都整体回滚并逐条退回单笔链路（见 SeckillOrderBatchService 语义契约）。
+     */
+    @Value("${seckill.consumer.batch.enabled:false}")
+    private boolean batchEnabled;
+
+    /** 批量建单快路径服务（未装配时自动退回单笔链路，与开关关闭等效） */
+    @Autowired(required = false)
+    private SeckillOrderBatchService orderBatchService;
 
     /** 订单处理线程池 — 核心线程数=CPU核数，最大=2倍CPU核数，有界队列1024，拒绝策略CallerRuns；
      *  虚拟线程模式下换成 per-task executor，并发上限由 consumePermits 信号量保护 */
@@ -160,18 +174,7 @@ public class SeckillPlusOrderListener implements RocketMQListener<String>, Rocke
                 .setTraceId(orderMessage.getTraceId());
 
         // ========== 故障注入埋点（线上通过 SeckillBugConfig 动态开关） ==========
-        // 线程本地泄漏：模拟消息解析时把大 buffer 塞进 ThreadLocal 没清 → 堆内存持续膨胀 → OOM
-        if (SeckillBugFlags.THREADLOCAL_LEAK.get()) {
-            SeckillBugFlags.LEAK_THREADLOCAL.set(new byte[3 * 1024 * 1024]);
-        }
-        // 线程爆炸：模拟每条消息起独立 newCachedThreadPool + 60s 长任务 → 线程数飙升 → CPU 飙满
-        if (SeckillBugFlags.THREAD_EXPLOSION.get()) {
-            java.util.concurrent.ExecutorService auditPool =
-                    java.util.concurrent.Executors.newCachedThreadPool();
-            auditPool.submit(() -> {
-                try { Thread.sleep(60_000); } catch (InterruptedException ignored) {}
-            });
-        }
+        applyConsumerFaultInjection();
 
         // ========== 核心建单：调 Service 层的 createVoucherOrderPlus ==========
         VoucherOrderCreateResult result;
@@ -232,6 +235,77 @@ public class SeckillPlusOrderListener implements RocketMQListener<String>, Rocke
     }
 
     /**
+     * 故障注入埋点（消费侧）—— 原内联于 processMessage，批量快路径同样逐条触发，保持实验语义一致。
+     */
+    private void applyConsumerFaultInjection() {
+        // 线程本地泄漏：模拟消息解析时把大 buffer 塞进 ThreadLocal 没清 → 堆内存持续膨胀 → OOM
+        if (SeckillBugFlags.THREADLOCAL_LEAK.get()) {
+            SeckillBugFlags.LEAK_THREADLOCAL.set(new byte[3 * 1024 * 1024]);
+        }
+        // 线程爆炸：模拟每条消息起独立 newCachedThreadPool + 60s 长任务 → 线程数飙升 → CPU 飙满
+        if (SeckillBugFlags.THREAD_EXPLOSION.get()) {
+            java.util.concurrent.ExecutorService auditPool =
+                    java.util.concurrent.Executors.newCachedThreadPool();
+            auditPool.submit(() -> {
+                try { Thread.sleep(60_000); } catch (InterruptedException ignored) {}
+            });
+        }
+    }
+
+    /**
+     * 批量快路径处理 —— 开关开启时整批消息走一个"快路径任务"。
+     *
+     * <p>流程：批量故障注入埋点（逐条）→ 批量建单快路径（一个事务）→
+     * 快路径失败/未装配则整批逐条退回 {@link #processMessage(MessageExt)}（原有完整语义）。
+     * 快路径内部保证要么整批成功要么整体回滚，因此这里不会出现"半批落库"状态。</p>
+     *
+     * <p>本方法不向外抛异常：快路径异常已就地退回逐条链路；逐条链路的异常在
+     * 循环内转为 recovery_task（与批量监听器既有语义一致），最终仍然
+     * CONSUME_SUCCESS —— 本链路不依赖 MQ 重试（README 取舍 #2）。</p>
+     */
+    void processBatch(List<MessageExt> msgs) {
+        List<SeckillVoucherOrderMessage> parsed = new ArrayList<>(msgs.size());
+        for (MessageExt msg : msgs) {
+            applyConsumerFaultInjection();
+            parsed.add(JSONUtil.toBean(new String(msg.getBody(), StandardCharsets.UTF_8),
+                    SeckillVoucherOrderMessage.class));
+        }
+
+        SeckillOrderBatchService.BatchOutcome outcome = null;
+        try {
+            outcome = orderBatchService.tryCreateBatch(parsed);
+        } catch (Exception e) {
+            log.warn("batch fast-path failed, fallback to per-row, batchSize={}", msgs.size(), e);
+            metricsRecorder.incConsumeBatchError();
+        }
+
+        if (outcome != null && !outcome.fallback()) {
+            // 快路径整批成功：批内去重的重复消息即幂等忽略，其余 CREATED
+            log.info("seckill plus batch created, size={}, created={}, duplicates={}",
+                    msgs.size(), outcome.createdCount(), outcome.duplicateCount());
+            return;
+        }
+
+        // 兜底：整批逐条走原有单笔语义（OUT_OF_STOCK 回滚 / DUPLICATE / recovery handoff）
+        for (MessageExt msg : msgs) {
+            try {
+                processMessage(msg);
+            } catch (Exception e) {
+                MessageExt failedMsg = msg;
+                String body = new String(failedMsg.getBody(), StandardCharsets.UTF_8);
+                SeckillVoucherOrderMessage orderMessage =
+                        JSONUtil.toBean(body, SeckillVoucherOrderMessage.class);
+                log.error("per-row fallback failed, create recovery task, orderId={}",
+                        orderMessage.getOrderId(), e);
+                metricsRecorder.incConsumeBatchError();
+                if (orderCreateRecoveryService != null) {
+                    orderCreateRecoveryService.createRecoveryTask(orderMessage, body, failedMsg.getReconsumeTimes());
+                }
+            }
+        }
+    }
+
+    /**
      * 配置批量并发消费 —— RocketMQ 消费者启动扩展钩子。
      * <p>
      * 覆盖默认行为（单条串行消费），改写为：
@@ -263,8 +337,54 @@ public class SeckillPlusOrderListener implements RocketMQListener<String>, Rocke
         // ① 设置批量拉取上限：默认 1，改成 32，一次和 Broker 交互拿更多消息
         consumer.setConsumeMessageBatchMaxSize(32);
 
+        // 批量模式调优说明（2026-10-28 实验，保留结论、不保留代码）：
+        //   曾尝试 batch 模式下 setConsumeThreadMin/Max(2) 让消息攒批 —— 实测消费端
+        //   反而变慢（174/s vs 默认线程数的 190/s），且批次依旧很小（p50=1）：
+        //   消费端能跟上到达速率时，消息在 ProcessQueue 里根本攒不起来，
+        //   batch 大小只由"两次拉取之间的到达量"决定。积压场景（消费跟不上）下
+        //   RocketMQ 本身就会拉满 pullBatchSize，无需 here 调优。故撤销。
+
         // ② 替换默认的串行监听器为"并发批量监听器"
         consumer.setMessageListener((MessageListenerConcurrently) (msgs, context) -> {
+            if (batchEnabled && orderBatchService != null) {
+                // 批量快路径：整批一个任务、一次并发许可覆盖整批事务
+                //（许可数仍为 consumePermits —— 一个许可现在保护 32 笔订单的事务，
+                //  行锁获取次数相应下降，这正是批量化优化的收益来源）
+                try {
+                    CompletableFuture.runAsync(() -> {
+                        if (consumePermits != null) {
+                            try {
+                                consumePermits.acquire();
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                throw new IllegalStateException("interrupted while acquiring consume permit", e);
+                            }
+                        }
+                        try {
+                            processBatch(msgs);
+                        } finally {
+                            if (consumePermits != null) {
+                                consumePermits.release();
+                            }
+                        }
+                    }, executor).get();
+                } catch (Exception e) {
+                    // processBatch 不向外抛；此处仅防御 executor 中断/拒绝等极端情况：
+                    // 逐条补写恢复任务，保持"不依赖 MQ 重试"的既有取舍
+                    log.error("batch task interrupted, create recovery tasks, batchSize={}", msgs.size(), e);
+                    metricsRecorder.incConsumeBatchError();
+                    for (MessageExt msg : msgs) {
+                        String body = new String(msg.getBody(), StandardCharsets.UTF_8);
+                        SeckillVoucherOrderMessage orderMessage =
+                                JSONUtil.toBean(body, SeckillVoucherOrderMessage.class);
+                        if (orderCreateRecoveryService != null) {
+                            orderCreateRecoveryService.createRecoveryTask(orderMessage, body, msg.getReconsumeTimes());
+                        }
+                    }
+                }
+                return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
+            }
+
             List<CompletableFuture<Void>> futures = new ArrayList<>(msgs.size());
 
             // 逐条包装成异步任务，丢进自建线程池并发执行；
