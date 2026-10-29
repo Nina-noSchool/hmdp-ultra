@@ -6,7 +6,7 @@
 
 一个基于**黑马点评**（大众点评类本地生活平台）的**深度魔改学习项目**
 
-![CI](https://github.com/Atomsk-m4lu/hmdp-ultra/actions/workflows/test.yml/badge.svg)
+![CI](https://github.com/Nina-noSchool/hmdp-ultra/actions/workflows/test.yml/badge.svg)
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-green)
 ![Redis](https://img.shields.io/badge/Redis-Lettuce-red)
