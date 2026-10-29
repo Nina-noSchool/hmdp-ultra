@@ -1,6 +1,8 @@
 package com.hmdp.shared.stateengine.spi;
 
 import com.hmdp.shared.stateengine.model.StateTask;
+import com.hmdp.shared.stateengine.model.StateTaskStatus;
+import com.hmdp.shared.stateengine.spi.StateTaskRepository;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -50,5 +52,27 @@ public class InMemoryStateTaskRepository implements StateTaskRepository {
     @Override
     public StateTask findByTaskId(String taskId) {
         return storage.get(taskId);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>内存实现：compute 原子地检查存储中的实时状态，仅当仍是 FAILED/MANUAL_REVIEW
+     * 时迁移到 RUNNING（直接复用存储中的同一实例，与 save/update 的共享实例语义一致）。</p>
+     */
+    @Override
+    public boolean claimForResume(StateTask task) {
+        boolean[] claimed = {false};
+        storage.compute(task.getTaskId(), (taskId, existing) -> {
+            if (existing == null) {
+                return null;
+            }
+            if (existing.getRuntimeStatus() == StateTaskStatus.FAILED
+                    || existing.getRuntimeStatus() == StateTaskStatus.MANUAL_REVIEW) {
+                existing.markRunning();
+                claimed[0] = true;
+            }
+            return existing;
+        });
+        return claimed[0];
     }
 }

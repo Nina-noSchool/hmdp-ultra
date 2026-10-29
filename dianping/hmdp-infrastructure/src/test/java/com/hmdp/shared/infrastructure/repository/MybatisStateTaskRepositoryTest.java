@@ -74,5 +74,26 @@ class MybatisStateTaskRepositoryTest {
         verify(mapper, never()).insert(any(com.hmdp.shared.infrastructure.persistence.dataobject.StateTask.class));
         verify(mapper).update(isNull(), any());
     }
+
+    @Test
+    void claimForResume_should_return_true_when_conditional_update_hits() {
+        // FAILED/MANUAL_REVIEW → RUNNING 的条件更新影响 1 行 = 抢占成功
+        when(mapper.update(isNull(), any())).thenReturn(1);
+
+        StateTask task = StateTask.create("claim-2", "shop-2", "FLASH_PAY", "SUBMITTED", "payload");
+
+        org.junit.jupiter.api.Assertions.assertTrue(repository.claimForResume(task));
+        verify(mapper).update(isNull(), any());
+    }
+
+    @Test
+    void claimForResume_should_return_false_when_another_trigger_won() {
+        // 影响行数 0 = 状态已不是 FAILED/MANUAL_REVIEW（被并发触发源接管或已完成）
+        when(mapper.update(isNull(), any())).thenReturn(0);
+
+        StateTask task = StateTask.create("claim-3", "shop-3", "FLASH_PAY", "SUBMITTED", "payload");
+
+        org.junit.jupiter.api.Assertions.assertFalse(repository.claimForResume(task));
+    }
 }
 

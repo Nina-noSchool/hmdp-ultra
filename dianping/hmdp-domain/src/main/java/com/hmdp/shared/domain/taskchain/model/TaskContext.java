@@ -2,6 +2,8 @@ package com.hmdp.shared.domain.taskchain.model;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,6 +27,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Getter
 public class TaskContext<I, O> {
 
+    private static final Logger log = LoggerFactory.getLogger(TaskContext.class);
+
     /**
      * 链路初始输入（比如商详链路的 shopId），由调用方在引擎执行前 set。
      */
@@ -40,6 +44,19 @@ public class TaskContext<I, O> {
      * 使用 ConcurrentHashMap 是因为并行节点的副本可能同时读写同一个 attributes 引用。
      */
     @Setter private Map<String, Object> attributes = new ConcurrentHashMap<>();
+
+    /**
+     * 属性写入者护栏（2026-10-29）：记录每个 key 最后一次写入的节点 ID，与 attributes
+     * 一样在 copy() 时共享同一实例。约定是"并行节点只写各自不同的 key"——
+     * 两个不同节点先后写同一 key 且值不同时，setAttribute 会打 WARN 显式暴露冲突，
+     * 不再静默覆盖（最后一个写入者仍然获胜，行为不变，只是把隐式约定变成可观测的告警）。
+     */
+    private Map<String, String> attributeWriters = new ConcurrentHashMap<>();
+
+    /** 写入者护栏视图（包级可见，供同包测试断言） */
+    Map<String, String> attributeWriters() {
+        return attributeWriters;
+    }
 
     /**
      * 整条链路的成功标志。某个不可跳过节点失败时会被设为 false。
@@ -86,13 +103,21 @@ public class TaskContext<I, O> {
     /**
      * 往 attributes 存中间结果。
      * value 为 null 时等价于删除该 key，方便节点用 setAttribute(key, null) 清理。
+     * 写入者护栏：不同节点写同一 key 且值不同 → WARN（见 attributeWriters）。
      */
     public void setAttribute(String key, Object value) {
         if (value == null) {
             attributes.remove(key);
             return;
         }
-        attributes.put(key, value);
+        Object previous = attributes.put(key, value);
+        String writer = currentNodeId == null ? "unknown" : currentNodeId;
+        String previousWriter = attributeWriters.put(key, writer);
+        if (previousWriter != null && !previousWriter.equals(writer)
+                && previous != null && !previous.equals(value)) {
+            log.warn("taskchain attribute conflict: key={} written by [{}] then [{}] with different values",
+                    key, previousWriter, writer);
+        }
     }
 
     /**
@@ -137,6 +162,7 @@ public class TaskContext<I, O> {
         copy.input = this.input;
         copy.output = this.output;
         copy.attributes = this.attributes;
+        copy.attributeWriters = this.attributeWriters;
         copy.success = this.success;
         copy.terminateChain = this.terminateChain;
         copy.currentNodeId = this.currentNodeId;

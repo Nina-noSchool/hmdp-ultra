@@ -94,6 +94,24 @@ public class MybatisStateTaskRepository implements StateTaskRepository {
         );
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>DB 实现：条件更新 WHERE task_id=? AND runtime_status IN ('FAILED','MANUAL_REVIEW')，
+     * 影响行数 &gt; 0 即抢占成功（状态已置 RUNNING）；= 0 说明被并发触发源接管或状态不匹配。</p>
+     */
+    @Override
+    public boolean claimForResume(StateTask task) {
+        com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<com.hmdp.shared.infrastructure.persistence.dataobject.StateTask> uw =
+                new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<>();
+        uw.eq("task_id", task.getTaskId())
+                .in("runtime_status",
+                        com.hmdp.shared.stateengine.model.StateTaskStatus.FAILED.name(),
+                        com.hmdp.shared.stateengine.model.StateTaskStatus.MANUAL_REVIEW.name())
+                .set("runtime_status", com.hmdp.shared.stateengine.model.StateTaskStatus.RUNNING.name())
+                .set("updated_at", java.time.LocalDateTime.now());
+        return stateTaskMapper.update(null, uw) > 0;
+    }
+
     private com.hmdp.shared.infrastructure.persistence.dataobject.StateTask toDataObject(StateTask task) {
         com.hmdp.shared.infrastructure.persistence.dataobject.StateTask dataObject = new com.hmdp.shared.infrastructure.persistence.dataobject.StateTask();
         dataObject.setTaskId(task.getTaskId());

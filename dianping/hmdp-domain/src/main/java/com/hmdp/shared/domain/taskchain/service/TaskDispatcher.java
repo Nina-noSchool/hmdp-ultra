@@ -4,10 +4,14 @@ import com.hmdp.shared.domain.taskchain.enums.TaskTypeEnum;
 import com.hmdp.shared.domain.taskchain.model.TaskContext;
 import com.hmdp.shared.domain.taskchain.model.TaskNodeHandler;
 import com.hmdp.shared.domain.taskchain.model.TaskNodeHolder;
+import lombok.extern.slf4j.Slf4j;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 
 /**
  * 任务分发器
@@ -20,7 +24,13 @@ import java.util.concurrent.Executor;
  * dispatchNodeSync 是同步版本（内部等待 Future 完成），用于串行阶段；
  * dispatchNodeAsync 是异步版本，返回 CompletableFuture，用于并行阶段。
  * </p>
+ *
+ * <p>取消传播（2026-10-29）：内部用 ExecutorService.submit 拿到 Future 句柄并挂到
+ * 返回的 CompletableFuture 上——阶段超时后引擎对每个节点 future 调 cancel(true) 时，
+ * 工作线程会被真正中断（对响应中断的阻塞 IO 调用生效），超时阶段不再留下
+ * "跑完但结果被丢弃"的孤儿任务占用线程池。</p>
  */
+@Slf4j
 public class TaskDispatcher {
 
     /**
@@ -37,15 +47,17 @@ public class TaskDispatcher {
      */
     private final Executor ioBoundExecutor;
 
-    /**
-     * 构造函数，注入两个独立线程池。
-     *
-     * @param cpuBoundExecutor CPU 密集型线程池
-     * @param ioBoundExecutor  IO 密集型线程池
-     */
+    /** 监听器列表（可观测性扩展点，可为空列表） */
+    private final List<TaskChainListener> listeners;
+
     public TaskDispatcher(Executor cpuBoundExecutor, Executor ioBoundExecutor) {
+        this(cpuBoundExecutor, ioBoundExecutor, List.of());
+    }
+
+    public TaskDispatcher(Executor cpuBoundExecutor, Executor ioBoundExecutor, List<TaskChainListener> listeners) {
         this.cpuBoundExecutor = cpuBoundExecutor;
         this.ioBoundExecutor = ioBoundExecutor;
+        this.listeners = listeners == null ? List.of() : List.copyOf(listeners);
     }
 
     /**
@@ -95,12 +107,17 @@ public class TaskDispatcher {
      * 核心执行逻辑：
      * <ol>
      *   <li>根据 holder.getTaskType() 拿到匹配的线程池（IO / CPU）</li>
-     *   <li>CompletableFuture.supplyAsync 把节点 execute 方法扔给线程池</li>
-     *   <li>执行前设置 currentNodeId（日志追踪用）</li>
+     *   <li>把节点 execute 方法扔给线程池，执行前设置 currentNodeId（日志追踪 + 属性写入者护栏的写入者标识）</li>
      *   <li>执行中抛 Throwable → markFailed 写错误 + 不可跳过节点自动 markTerminate</li>
      *   <li>无论成功还是失败，最终返回同一个 context（调用方拿到后 mergeError / mergeData）</li>
      * </ol>
      * </p>
+     *
+     * <p>取消语义：返回的 CompletableFuture 被引擎 cancel(true) 时（阶段超时），
+     * 工作线程会被中断——正在执行的阻塞 IO 调用（响应中断的部分）会立刻失败返回；
+     * 已提交但未开始的任务不会再执行。中断不了的节点（自旋/不响应中断）会跑完，
+     * 但其结果会因 promise 已取消而被引擎丢弃。提交被线程池拒绝时异常直接向调用方传播，
+     * 由 executePhase 的统一兜底转为阶段失败。</p>
      *
      * @param holder  封装好的节点 Bean + @TaskNode 元数据
      * @param context 任务上下文（并行模式下是 context.copy() 的副本，避免多线程写同一个对象）
@@ -108,18 +125,18 @@ public class TaskDispatcher {
      */
     @SuppressWarnings("unchecked")
     public <I, O> CompletableFuture<TaskContext<I, O>> dispatchNodeAsync(TaskNodeHolder holder, TaskContext<I, O> context) {
-        // 按节点声明的 taskType（IO_BOUND / CPU_BOUND）路由到对应线程池
+        // 按节点声明的 taskType（IO / CPU）路由到对应线程池
         Executor executor = getExecutor(holder.getTaskType());
-        // supplyAsync：把节点执行逻辑扔给线程池，立即返回 Future（不阻塞调用方）
-        return CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<TaskContext<I, O>> promise = new CompletableFuture<>();
+        Runnable nodeTask = () -> {
+            long startNanos = System.nanoTime();
             try {
-                // 执行前先设 currentNodeId，方便日志追踪当前哪个节点在跑
+                // 执行前先设 currentNodeId：日志追踪当前哪个节点在跑
                 context.setCurrentNodeId(holder.getAnnotation().nodeId());
-                // ★ 真正调节点的 execute 方法：holder.getHandler() 是 Spring 扫描到的节点 Bean
-                // unchecked cast 安全：Registry.wrapHandlers 时已匹配过泛型
-                ((TaskNodeHandler<I, O>) holder.getHandler()).execute(context);
-                // 节点跑完，返回被改过的 context（attributes / output 可能已写入数据）
-                return context;
+                // ★ 真正调节点的 execute 方法：先收窄到局部变量再调用
+                // unchecked 安全：Registry.wrapHandlers 时已匹配过泛型
+                TaskNodeHandler<I, O> handler = (TaskNodeHandler<I, O>) holder.getHandler();
+                handler.execute(context);
             } catch (Throwable throwable) {
                 // 节点抛了异常：先 markFailed 写错误信息到 context
                 context.markFailed("Node execution failed: " + holder.getAnnotation().nodeId(), throwable);
@@ -128,9 +145,41 @@ public class TaskDispatcher {
                 if (!holder.getAnnotation().skippable()) {
                     context.markTerminate();
                 }
-                // 即使失败也返回 context，调用方拿到后能通过 mergeError 合并失败状态
-                return context;
+            } finally {
+                notifyNodeEnd(holder, context, startNanos);
+                // 阶段超时取消后 promise 已 cancelled，这里的 complete 会被忽略——孤儿任务的结果不回流
+                promise.complete(context);
             }
-        }, executor);
+        };
+        if (executor instanceof ExecutorService executorService) {
+            // submit 才有 Future 句柄：cancel(true) 才能真正中断工作线程
+            Future<?> rawFuture = executorService.submit(nodeTask);
+            promise.whenComplete((ignored, throwable) -> {
+                if (promise.isCancelled()) {
+                    rawFuture.cancel(true);
+                }
+            });
+        } else {
+            // 非 ExecutorService（理论上不会发生）：退化为不可中断提交
+            executor.execute(nodeTask);
+        }
+        return promise;
+    }
+
+    /** 回调节点结束监听器（监听器异常吞掉降级 WARN——观测组件故障不影响业务） */
+    private void notifyNodeEnd(TaskNodeHolder holder, TaskContext<?, ?> context, long startNanos) {
+        if (listeners.isEmpty()) {
+            return;
+        }
+        long costMs = (System.nanoTime() - startNanos) / 1_000_000L;
+        String error = context.isSuccess() ? null : context.getErrorMessage();
+        for (TaskChainListener listener : listeners) {
+            try {
+                listener.onNodeEnd(holder.getPhase().name(), holder.getAnnotation().nodeId(),
+                        holder.getTaskType().name(), costMs, context.isSuccess(), error);
+            } catch (Exception e) {
+                log.warn("taskchain listener threw, nodeId={}", holder.getAnnotation().nodeId(), e);
+            }
+        }
     }
 }

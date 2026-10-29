@@ -40,4 +40,18 @@ public interface StateTaskRepository {
      * @return 匹配的 StateTask，未找到返回 null
      */
     StateTask findByTaskId(String taskId);
+
+    /**
+     * resume 的 CAS 抢占：尝试把持久层状态从 FAILED/MANUAL_REVIEW 原子地迁移到 RUNNING。
+     *
+     * <p>背景：resume 的触发源可能有多个（定时扫描 + 人工触发），两个触发源同时恢复
+     * 同一个任务会导致节点被双重执行。抢占失败的触发源必须放弃本次驱动。</p>
+     *
+     * <p>附带收益：对 COMPLETED/PENDING/RUNNING 状态任务的重复 resume 也会被挡下
+     * （不在期望状态集合内），堵住"已完成任务被误重放"的幂等漏洞。</p>
+     *
+     * @param task 待恢复的任务（taskId 定位持久层行）
+     * @return true=抢占成功（状态已置 RUNNING，调用方可以驱动执行）；false=抢占失败（他人已接管或状态不匹配）
+     */
+    boolean claimForResume(StateTask task);
 }

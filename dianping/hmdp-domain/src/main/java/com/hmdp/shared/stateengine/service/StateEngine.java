@@ -7,6 +7,7 @@ import com.hmdp.shared.stateengine.model.StateTransitionLog;
 import com.hmdp.shared.stateengine.policy.RetryPolicy;
 import com.hmdp.shared.stateengine.spi.StateTaskRepository;
 import com.hmdp.shared.stateengine.spi.StateTransitionLogRepository;
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -23,6 +24,7 @@ import java.time.LocalDateTime;
  *   <li>{@link #resume(StateTask)} — 从FAILED/MANUAL_REVIEW状态恢复执行（update）</li>
  * </ul></p>
  */
+@Slf4j
 public class StateEngine {
 
     /** 状态机注册表，运行时根据 task.machineCode 查找对应的 StateMachineDefinition */
@@ -79,10 +81,20 @@ public class StateEngine {
      * <p>典型场景：FAILED状态任务经重试策略判断可重试时，
      * 或MANUAL_REVIEW状态任务人工处理后重新驱动。</p>
      *
+     * <p>并发抢占（2026-10-29）：resume 的触发源可能有多个（定时扫描 + 人工触发），
+     * 通过 {@code claimForResume} 把持久层状态原子地从 FAILED/MANUAL_REVIEW 迁移到
+     * RUNNING，只有抢到的赢家才驱动执行；输家（含对 COMPLETED/PENDING 任务
+     * 的重复触发）直接放弃——节点绝不会被双重执行。</p>
+     *
      * @param task 从持久层恢复的任务
-     * @return 执行结束后的任务
+     * @return 抢占成功时为执行结束后的任务；抢占失败时原样返回传入任务（调用方可凭 runtimeStatus 判断）
      */
     public StateTask resume(StateTask task) {
+        if (!taskRepository.claimForResume(task)) {
+            log.warn("state task resume claim lost, skip run, taskId={}, runtimeStatus={}",
+                    task.getTaskId(), task.getRuntimeStatus());
+            return task;
+        }
         task.markRunning();
         taskRepository.update(task);
         return run(task);
@@ -116,8 +128,21 @@ public class StateEngine {
             StateNode node = machine.getRequiredNode(task.getCurrentState());
             LocalDateTime startedAt = LocalDateTime.now();
 
-            // 2. 执行节点逻辑
-            NodeResult result = node.execute(task, new StateContext(machine.getMachineCode()));
+            // 2. 执行节点逻辑 —— 异常也是一种失败（2026-10-29）：
+            //    此前节点抛异常会直接冒到调用方，任务永远停在 RUNNING 且没有任何恢复路径
+            //    （resume 只认 FAILED/MANUAL_REVIEW）。现在兜底成 NODE_EXCEPTION 失败，
+            //    补齐流转日志并走与显式失败完全相同的策略路径（FailurePolicy/RetryPolicy 决策）。
+            NodeResult result;
+            try {
+                result = node.execute(task, new StateContext(machine.getMachineCode()));
+            } catch (Exception e) {
+                log.error("state node threw unexpected exception, taskId={}, state={}",
+                        task.getTaskId(), node.getStateCode(), e);
+                result = NodeResult.failure("NODE_EXCEPTION",
+                        "unexpected exception: " + e.getClass().getSimpleName()
+                                + (e.getMessage() == null ? "" : (": " + e.getMessage())),
+                        true);
+            }
 
             // 3. 构造并记录流转日志
             StateTransitionLog transitionLog = StateTransitionLog.of(

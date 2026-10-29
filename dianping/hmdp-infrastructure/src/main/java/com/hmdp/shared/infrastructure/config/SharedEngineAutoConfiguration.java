@@ -17,7 +17,9 @@ import com.hmdp.shared.domain.taskchain.model.TaskNodeHandler;
 import com.hmdp.shared.domain.taskchain.model.TaskNodeRegistry;
 import com.hmdp.shared.domain.taskchain.service.PhaseExecutionEngine;
 import com.hmdp.shared.domain.taskchain.service.TaskChainEngine;
+import com.hmdp.shared.domain.taskchain.service.TaskChainListener;
 import com.hmdp.shared.domain.taskchain.service.TaskDispatcher;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -44,6 +46,7 @@ import java.util.concurrent.Executor;
  * </ul>
  * </p>
  */
+@Slf4j
 @Configuration
 @EnableConfigurationProperties({CompensationRetryProperties.class, PayoutAuditProperties.class})
 public class SharedEngineAutoConfiguration {
@@ -111,13 +114,45 @@ public class SharedEngineAutoConfiguration {
 
     @Bean
     public TaskDispatcher taskDispatcher(@Qualifier("taskChainCpuExecutor") Executor cpuExecutor,
-                                         @Qualifier("taskChainIoExecutor") Executor ioExecutor) {
-        return new TaskDispatcher(cpuExecutor, ioExecutor);
+                                         @Qualifier("taskChainIoExecutor") Executor ioExecutor,
+                                         org.springframework.beans.factory.ObjectProvider<TaskChainListener> listeners) {
+        return new TaskDispatcher(cpuExecutor, ioExecutor,
+                listeners.orderedStream().toList());
     }
 
     @Bean
-    public PhaseExecutionEngine phaseExecutionEngine(TaskDispatcher taskDispatcher) {
-        return new PhaseExecutionEngine(taskDispatcher);
+    public PhaseExecutionEngine phaseExecutionEngine(TaskDispatcher taskDispatcher,
+                                                     org.springframework.beans.factory.ObjectProvider<TaskChainListener> listeners) {
+        return new PhaseExecutionEngine(taskDispatcher, listeners.orderedStream().toList());
+    }
+
+    /**
+     * 引擎可观测性的日志实现：节点/阶段结束时输出结构化 INFO（失败升 WARN，慢节点 500ms 阈值）。
+     * Micrometer Timer 属于一行接入的事——在此实现里替换/追加即可，引擎保持零观测依赖。
+     */
+    @Bean
+    public TaskChainListener loggingTaskChainListener() {
+        return new TaskChainListener() {
+            private static final long SLOW_NODE_MS = 500L;
+
+            @Override
+            public void onNodeEnd(String phase, String nodeId, String taskType, long costMs,
+                                  boolean success, String error) {
+                if (!success) {
+                    log.warn("taskchain node end: phase={}, node={}, type={}, cost={}ms, success={}, error={}",
+                            phase, nodeId, taskType, costMs, success, error);
+                } else if (costMs >= SLOW_NODE_MS) {
+                    log.info("taskchain node end (slow): phase={}, node={}, type={}, cost={}ms",
+                            phase, nodeId, taskType, costMs);
+                }
+            }
+
+            @Override
+            public void onPhaseEnd(String phase, long costMs, boolean success, String error) {
+                log.info("taskchain phase end: phase={}, cost={}ms, success={}, error={}",
+                        phase, costMs, success, error);
+            }
+        };
     }
 
     @Bean
