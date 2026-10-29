@@ -15,6 +15,7 @@ A **deeply customized learning project** based on **Heima Dianping** (a Yelp-lik
 ![Caffeine](https://img.shields.io/badge/Caffeine-L1%20Cache-brown)
 ![JMeter](https://img.shields.io/badge/JMeter-Load%20Test-orange)
 ![Arthas](https://img.shields.io/badge/Arthas-Diagnostics-red)
+![Tests](https://img.shields.io/badge/Tests-139%20passing-brightgreen)
 
 ![Seckill](https://img.shields.io/badge/Seckill-4000%20Concurrent%20%C2%B7%20Zero%20Oversell-success)
 ![GitHub stars](https://img.shields.io/github/stars/Nina-noSchool/hmdp-ultra?style=social&label=Stars)
@@ -27,6 +28,10 @@ The original project solved the "from 0 to 1" problem — seckill, caching, chec
 - **How to keep the code under control**: a homegrown orchestratable task-chain engine and a CBB state-machine engine, completely separating orchestration logic from business logic
 - **How to guarantee data consistency**: Redis pre-deduction + RocketMQ async order creation + a four-level reliability fallback of local message table / order-creation verification / recovery tasks / reconciliation compensation
 - **How to troubleshoot production issues**: 7 types of JVM fault-injection switches + JMeter load testing + Prometheus metrics + an Arthas-based diagnosis loop
+- **How to measure honestly**: a safety-hardened load-testing toolchain (baseline assertions, broker offset resets, sustained-concurrency mode, warm-up isolation) with all negative results archived
+
+> [!NOTE]
+> **Recent updates (2026-10)**: JDK 21 / Spring Boot 3.2 migration completed; three-column virtual-thread benchmark (throughput -44% under sustained load → **disabled by default**, negative result archived); a hand-rolled Redis BitMap bloom-filter guard against cache penetration (fail-open, verified live); consumer batch fast-path (off by default; benefit requires consumer lag); robustness fixes for both homegrown engines (node-exception fallback, resume CAS claiming, phase-timeout cancellation propagation, attribute-writer guard). Full details are in the Chinese README and `dianping/stress-test/ANALYSIS-*.md`.
 
 ---
 
@@ -41,7 +46,7 @@ The original project solved the "from 0 to 1" problem — seckill, caching, chec
 - **Reconciliation system**: DEDUCT / RESTORE reconciliation logs (with before/after stock snapshots) + bidirectional scanning of the order and stock domains + tiered handling of exception tickets
 - **Entrance rate limiting**: sliding-window rate limiting (Redis ZSET + Lua for atomic eviction/counting/writes), configurable per user at 5 requests/s with an on/off switch; over-limit requests get an immediate 429
 - **Failure-path tracing**: Redis rollback failures land in `tb_rollback_failure_log` + an alert flag, complementing reconciliation scans; local message table retries have an upper bound and a terminal FAILED state
-- **Observability**: nine business metrics (retries exhausted / rollback failures / escalated-to-human / reconciliation anomalies / rate-limit rejections / cache hit ratio…) pre-registered at startup and wired into Prometheus; check the "consistency report card" at the end of load tests (tutorial Part 15.0)
+- **Observability**: business counters in 7 categories (retries exhausted / rollback failures / escalated-to-human / reconciliation anomalies / rate-limit rejections / cache hit ratio…) pre-registered at startup and wired into Prometheus; check the "consistency report card" at the end of load tests (tutorial Part 15.0)
 
 ### 🧩 Orchestratable Task-Chain Engine (Homegrown)
 

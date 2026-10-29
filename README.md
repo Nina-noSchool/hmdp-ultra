@@ -7,6 +7,7 @@
 一个基于**黑马点评**（大众点评类本地生活平台）的**深度魔改学习项目**
 
 ![CI](https://github.com/Nina-noSchool/hmdp-ultra/actions/workflows/test.yml/badge.svg)
+![Tests](https://img.shields.io/badge/Tests-139%20passing-brightgreen)
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-green)
 ![Redis](https://img.shields.io/badge/Redis-Lettuce-red)
@@ -28,7 +29,7 @@
 - **代码怎么不失控**：自研可编排任务链引擎与 CBB 状态机引擎，把编排逻辑从业务逻辑中彻底剥离
 - **数据一致性怎么保证**：Redis 预扣 + RocketMQ 异步建单 + 本地消息表 / 建单校验 / 恢复任务 / 对账补偿的四级可靠性兜底
 - **线上问题怎么排查**：7 类 JVM 故障注入开关 + JMeter 压测 + Prometheus 指标 + Arthas 定位闭环
-- **技术栈怎么演进**：JDK 8 → 21、Spring Boot 2.3 → 3.2（jakarta 全量迁移），106 单测全绿 + VM 并行部署验证——[迁移实录](docs/MIGRATION-JDK21.md)
+- **技术栈怎么演进**：JDK 8 → 21、Spring Boot 2.3 → 3.2（jakarta 全量迁移），139 单测全绿 + VM 并行部署验证——[迁移实录](docs/MIGRATION-JDK21.md)
 
 ---
 
@@ -42,14 +43,17 @@
 - **超时关单**：延时消息触发 + 定时兜底扫描双保险，关单幂等回补库存
 - **对账体系**：DEDUCT / RESTORE 对账日志（含库存前后快照）+ 订单域与库存域双向扫描 + 异常工单分级处置
 - **入口限流**：滑动窗口限流（Redis ZSET + Lua 原子淘汰/计数/写入），按用户 1s/5 次可配可开关，超限直接 429
+- **防穿透布隆前置守卫**：Redis BitMap 手写布隆（参数显式可算 + 双重哈希 + Lua 原子 + fail-open），确定不存在的 id 在进 缓存→负缓存→DB 链之前直接拒绝——布隆误判落回负缓存兜底，绝不误杀真实数据；每日 resync 归零误判率
+- **消费端批量建单快路径（开关默认关）**：整批一个事务（FOR UPDATE 锁库存行 + 一次扣 N + 批量插入），契约=要么整批成功要么整体回滚退逐条；实测发现收益前提是消费积压（负结果归档）；**延时消息异步化**：发送时机/失败落表兜底不变，请求线程不再阻塞等 20 分钟后才触发的备份消息
 - **失败路径留痕**：Redis 回滚失败落 `tb_rollback_failure_log` + 告警标记，与对账扫描互补；本地消息表重试设有上限与 FAILED 终态
-- **可观测性**：九个业务指标（重试耗尽 / 回滚失败 / 转人工 / 对账异常 / 限流拒绝 / 缓存命中率…）启动预注册并接入 Prometheus，压测收尾看"一致性体检表"（导学 Part 15.0）
+- **可观测性**：七类业务计数器（重试耗尽 / 回滚失败 / 转人工 / 对账异常 / 限流拒绝 / 消费批异常 / 发送失败落表）+ 缓存命中率指标，启动预注册并接入 Prometheus，压测收尾看"一致性体检表"
 
 ### 🧩 可编排任务链引擎（自研）
 
 - **五阶段流水线**：PRE_VALIDATION → PRE_PROCESSING（数据判断）→ DATA_PROCESSING → DATA_INSERTION → POST_PROCESSING，各阶段独立配置串行/并行
 - **注解驱动**：`@TaskNode` 声明归属/顺序/线程池类型/可跳过语义，启动期构建不可变执行计划
 - **CPU / IO 双线程池物理隔离**，避免互相饥饿
+- **健壮性补完（2026-10-29）**：阶段超时经 Future 句柄**真正中断孤儿任务**（CF 自带 cancel 不中断线程）、属性写入者冲突 WARN 护栏（不同节点写同 key 不同值显式暴露）、TaskChainListener 可观测性 SPI（节点/阶段耗时钩子）
 - **copy-merge 上下文并发模型**（参考 MVCC 多版本思想），解决并行节点写入竞争
 - **落地场景**：商详页多数据源并行聚合、店铺评分刷新流水线
 
@@ -58,6 +62,7 @@
 - **双层抽象**：引擎层零业务感知（payload 纯字符串），业务层只实现 StateNode
 - **断点续传式持久化**：StateTask + StateTransitionLog 全部落库（SPI 扩展点，内存实现 / MyBatis 实现可切换）
 - **失败策略分层**：FailurePolicy（业务层：该不该重试）+ RetryPolicy（引擎层：还剩几次），不可重试自动转人工
+- **健壮性补完（2026-10-29）**：节点异常兜底成 NODE_EXCEPTION 失败并走完整策略路径（修复"异常任务卡 RUNNING 无恢复路径"的真 bug）；**resume CAS 抢占**（FAILED/MANUAL_REVIEW 原子迁移 RUNNING）——并发触发源防双执行，附带挡下已完成任务的误重放
 - **落地场景**：无忧闪赔赔付流程（SUBMITTED → APPROVED 算金额+调支付 → COMPLETED 查回执/写审计/发通知 / MANUAL_REVIEW）；支付、审计、通知均为 SPI 扩展点，支付以赔付单号为幂等键，失败统一转人工
 
 ### 🧠 多级缓存与失效广播
@@ -88,8 +93,11 @@
 | R4 缓存 | 多级缓存 L1 · 开 / 关 | 开：50 请求 **L1 命中 45、Redis 读流量省 90%**；关：每次请求打 Redis |
 | R5 故障 | CPU 自旋注入 | 冷 JIT 单请求 **10–16s（约 775×）**，jstack 抓到 26 层火焰栈直指注入点 `fibonacciWarmup` |
 
+> [!NOTE]
+> **2026-10-27/28 三列对照与优化实验（12G VM）**：持续并发模式揭穿 ramp-up 吞吐为 JMeter 建线程速率假闸门（~140/s → 平台 **275/s**）；虚拟线程 sustained 154/s（**-44%**）→ **默认关**（负结果 + 背压机制归因）；fsync 与消费端批量均为负结果归档（含适用边界分析）。详见 [ANALYSIS-20261027](dianping/stress-test/ANALYSIS-20261027-three-columns.md) / [ANALYSIS-OPT-20261028](dianping/stress-test/ANALYSIS-OPT-20261028.md)。
+>
 > [!TIP]
-> 原始数据（JTL / 日志 / 火焰栈 / 四份分析报告）见 [`dianping/stress-test`](dianping/stress-test)。
+> 原始数据（JTL / 日志 / 火焰栈 / 分析报告）见 [`dianping/stress-test`](dianping/stress-test)；压测方法与安全流程见 [README-BENCHMARK](dianping/stress-test/README-BENCHMARK.md)。
 
 ---
 
@@ -203,9 +211,20 @@ java -jar dianping/hmdp-start/target/*.jar
 curl http://localhost:8081/actuator/health
 ```
 
-### 一键压测（可选）
+### 压测（可选）
 
-`dianping/stress-test/` 提供完整工具链：`prepare_seckill_test.sh`（批量造用户 Token + 清库 + 同步库存）→ `run_seckill_test.sh`（JMeter 压测 + 指标报告，需先 `export MYSQL_PASS=<密码>`）。历史结果与五轮矩阵归档在 `results/`。
+`dianping/stress-test/` 提供安全化工具链（方法与流程详见 [README-BENCHMARK](dianping/stress-test/README-BENCHMARK.md)）：
+
+```bash
+# ① 应用停止后准备基线（重置 broker 位点 → 清库 → 断言，不过即拒跑）
+bash prepare_seckill_test.sh 4000 13
+# ② 启动应用（benchmark profile）后执行压测：基线断言 → JMeter → 消费收敛等待 → JTL 解析 → 三方一致性断言
+bash run_seckill_test.sh 4000 3 13
+# ③ 三列对照（JDK8 / JDK21平台 / JDK21虚拟，支持持续并发模式与预热隔离）
+bash three_columns_12g.sh
+```
+
+历史结果、五轮矩阵与实验归档在 `results/` 与两份 `ANALYSIS-*.md`。
 
 ---
 
@@ -258,19 +277,36 @@ curl http://localhost:8081/actuator/health
 
 </details>
 
+<details>
+<summary><b>6. 虚拟线程默认关闭（实测负结果，2026-10-29）</b></summary>
+
+已接入两处开关（Tomcat + 消费端，配 Semaphore 限并发）并完成三列对照实测：持续并发口径下吞吐 **-44%**、Avg **8-16 倍**。机制：平台线程池的 800 上限是天然背压阀，虚拟线程拆掉它后，排队从免费的内核 accept 队列搬进计时的服务端管线。结论：瓶颈在下游（消费端 197/s + 4 CPU），不在线程模型——开关保留，默认 false。正场景是"长等待 × 高并发 × CPU 空闲"（本系统恰好逐条相反）。
+
+</details>
+
+<details>
+<summary><b>7. 消费端批量的适用边界（实测负结果，2026-10-29）</b></summary>
+
+批量建单快路径已实现（整批一个事务，异常整体回滚退逐条），但实测批均只有 1.6：**消费端跟得上到达速率时消息攒不成批，批量的收益前提是积压**。强制攒批（消费线程=2）反而更慢，已撤销。基础设施保留、开关默认关——出现真实积压时打开即用，语义契约（整批回滚退逐条）已实弹验证。
+
+</details>
+
 ---
 
 ## 🗺️ Roadmap
 
-- [x] **JDK 21 / Spring Boot 3.2 迁移（2026-10-27）**：8→21 + Boot 2.3→3.2 + jakarta 全量迁移，106 单测全绿，VM 并行部署冒烟通过——迁移实录见 [docs/MIGRATION-JDK21.md](docs/MIGRATION-JDK21.md)
+- [x] **JDK 21 / Spring Boot 3.2 迁移（2026-10-27）**：8→21 + Boot 2.3→3.2 + jakarta 全量迁移，139 单测全绿，VM 并行部署冒烟通过——迁移实录见 [docs/MIGRATION-JDK21.md](docs/MIGRATION-JDK21.md)
 - [x] 五轮压测矩阵 + 三组开/关对照实验（限流 / 多级缓存 / 新旧版本）——结果归档 `dianping/stress-test/`
 - [x] 修复建单校验重试耗尽后未转恢复任务的接线问题（2026-10-17：@Lazy 注入恢复服务，校验 FAILED 后正常转恢复）
 - [x] 失败路径加固（2026-10-17）：发布成功后不回滚 Redis / 恢复与校验任务卡死回收 / 对账补偿 CAS 抢占 / 延时消息重发保档
 - [x] 多级缓存读穿透与负缓存（2026-10-20）：冷 key 互斥回源 + 空值标记，删除缓存后不再依赖预热
+- [x] **虚拟线程接入与三列实测（2026-10-29）**：任务链 IO 池与消费池开关 + Semaphore 限并发；实测吞吐 -44% → **默认关**（负结果 + 背压机制归因，实录见 [docs/VIRTUAL-THREADS.md](docs/VIRTUAL-THREADS.md)）
+- [x] **防穿透布隆前置守卫（2026-10-29）**：Redis BitMap 手写布隆 + 实弹冒烟（14 店 resync、恶意 id 4.3ms 拒、负缓存零写入）
+- [x] **消费端批量建单快路径 + 延时消息异步化（2026-10-29）**：批量开关默认关（负结果：收益前提是积压）
+- [x] **双引擎健壮性补完（2026-10-29）**：节点异常兜底（修复卡 RUNNING 真 bug）/ resume CAS 抢占 / 阶段超时取消传播 / 属性写入者护栏 / TaskChainListener SPI——139 单测全绿
 - [ ] 对账数据源纳入 Redis 预扣追踪日志，覆盖"无 DB 留痕"漂移
-- [ ] 接入虚拟线程（任务链 IO 池与消费池；JDK21 迁移已完成，只差开关与复测）
 - [ ] Agent 评估体系（回答准确率/工具调用成功率）
-- [ ] 多实例部署下的定时任务分布式调度（当前单机 `@Scheduled`）
+- [ ] 多实例部署下的定时任务分布式调度（当前单机 `@Scheduled`；多实例兼容性盘点见 README 面经口径——布隆/缓存/消费端已就绪，仅缺 Job 调度锁）
 
 ---
 
