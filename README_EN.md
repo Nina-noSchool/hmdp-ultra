@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# 🐴 hmdp-ultra — Heima Dianping, Deeply Customized
+# 🐴 RushRate (hmdp-ultra) — Heima Dianping, Deeply Customized
 
 A **deeply customized learning project** based on **Heima Dianping** (a Yelp-like local lifestyle platform)
 

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# 🐴 hmdp-ultra — 黑马点评深度魔改版
+# 🐴 RushRate（hmdp-ultra）— 黑马点评深度魔改版
 
 一个基于**黑马点评**（大众点评类本地生活平台）的**深度魔改学习项目**
 
