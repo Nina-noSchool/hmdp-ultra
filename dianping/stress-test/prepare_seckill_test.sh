@@ -123,8 +123,9 @@ for extra in ${EXTRA_VOUCHER_IDS:-}; do
          DELETE FROM tb_order_create_verify_task WHERE voucher_id = ${extra};
          DELETE FROM tb_order_create_recovery_task WHERE voucher_id = ${extra};
          DELETE FROM tb_seckill_reconcile_task WHERE voucher_id = ${extra};"
-  query "UPDATE tb_seckill_voucher SET stock = ${USER_COUNT} WHERE voucher_id = ${extra};
-         SELECT ROW_COUNT();" >/dev/null
+  query "UPDATE tb_seckill_voucher SET stock = ${USER_COUNT} WHERE voucher_id = ${extra}"
+  EXTRA_STOCK=$(query "SELECT stock FROM tb_seckill_voucher WHERE voucher_id = ${extra}")
+  [ "${EXTRA_STOCK}" = "${USER_COUNT}" ] || fail "额外券 ${extra} 库存同步失败：stock=${EXTRA_STOCK}"
   "${REDIS_CMD[@]}" del "seckill:stock:${extra}" "seckill:order:${extra}" "seckill:trace:log:${extra}" >/dev/null
   while IFS= read -r key; do
     [ -n "${key}" ] && "${REDIS_CMD[@]}" del "${key}" >/dev/null
@@ -134,8 +135,11 @@ done
 # ---- 4. 同步 DB 库存 ----
 echo ""
 echo "[3/8] 同步数据库库存..."
-UPDATED=$(query "UPDATE tb_seckill_voucher SET stock = ${USER_COUNT} WHERE voucher_id = ${VOUCHER_ID}; SELECT ROW_COUNT();")
-[ "${UPDATED}" = "1" ] || fail "DB 库存更新失败（ROW_COUNT=${UPDATED}，券 ${VOUCHER_ID} 不存在？）"
+# 注意：mysql CLI 的 ROW_COUNT() 对 UPDATE 返回"变更行数"，值未变化时为 0，
+# 不能用它判断券是否存在（会假失败）。UPDATE 后直接读回 stock 断言。
+query "UPDATE tb_seckill_voucher SET stock = ${USER_COUNT} WHERE voucher_id = ${VOUCHER_ID}"
+NOW_STOCK=$(query "SELECT stock FROM tb_seckill_voucher WHERE voucher_id = ${VOUCHER_ID}")
+[ "${NOW_STOCK}" = "${USER_COUNT}" ] || fail "DB 库存同步失败：UPDATE 后 stock=${NOW_STOCK}，期望 ${USER_COUNT}（券 ${VOUCHER_ID} 存在？）"
 echo "  DB stock set to ${USER_COUNT}"
 
 # ---- 5. 清理 Redis 旧数据 ----
