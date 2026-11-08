@@ -2,6 +2,7 @@ package com.hmdp.controller;
 
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.util.StrUtil;
 import com.hmdp.dto.LoginFormDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.UserDTO;
@@ -17,6 +18,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 
 /**
@@ -63,30 +65,39 @@ public class UserController {
     /**
      * 用户登录
      * <p>
-     * 支持两种登录方式：手机号 + 验证码，或手机号 + 密码。登录成功后将用户信息保存到 Redis。
+     * 支持手机号 + 验证码登录。登录成功后将用户信息保存到 Redis，并绑定设备：
+     * 同一 {@code X-Device-Id} 重复登录会原子踢掉该设备上的旧会话（设备互踢），
+     * 不同设备互不影响。未携带设备头时按 default 设备处理。
      * </p>
      *
-     * @param loginForm 登录参数，包含手机号、验证码；或者手机号、密码
+     * @param loginForm 登录参数，包含手机号、验证码
      * @param session   HttpSession
-     * @return 登录结果，成功时返回用户信息
+     * @param deviceId  客户端设备标识（请求头 X-Device-Id，可空）
+     * @return 登录结果，成功时 data 为本次登录的 token
      */
     @PostMapping("/login")
-    public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session){
-        return userService.login(loginForm,session);
+    public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session,
+                        @RequestHeader(value = "X-Device-Id", required = false) String deviceId) {
+        return userService.login(loginForm, session, deviceId);
     }
 
     /**
      * 用户登出
      * <p>
-     * 清除当前线程中的用户信息占位。注：完整的登出功能还需移除 Redis 中的登录状态（待实现）。
+     * 删除 Redis 中当前 token 的会话 Hash，会话立即失效（设备互踢的主动形态）。
      * </p>
      *
+     * @param request 用于读取请求头中的登录令牌
      * @return 登出结果
      */
     @PostMapping("/logout")
-    public Result logout(){
-        UserHolder.removeUser();
-        return Result.fail("功能未完成");
+    public Result logout(HttpServletRequest request) {
+        String token = request.getHeader("authorization");
+        if (StrUtil.isBlank(token)) {
+            return Result.fail("当前无有效会话");
+        }
+        userService.logout(token);
+        return Result.ok();
     }
 
     /**

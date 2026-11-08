@@ -9,7 +9,7 @@
 一个基于**黑马点评**（大众点评类本地生活平台）的**深度魔改学习项目**
 
 ![CI](https://github.com/Nina-noSchool/hmdp-ultra/actions/workflows/test.yml/badge.svg)
-![Tests](https://img.shields.io/badge/Tests-139%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-147%20passing-brightgreen)
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-green)
 ![Redis](https://img.shields.io/badge/Redis-Lettuce-red)
@@ -306,6 +306,7 @@ bash three_columns_12g.sh
 - [x] **防穿透布隆前置守卫（2026-10-29）**：Redis BitMap 手写布隆 + 实弹冒烟（14 店 resync、恶意 id 4.3ms 拒、负缓存零写入）
 - [x] **消费端批量建单快路径 + 延时消息异步化（2026-10-29）**：批量开关默认关（负结果：收益前提是积压）
 - [x] **双引擎健壮性补完（2026-10-29）**：节点异常兜底（修复卡 RUNNING 真 bug）/ resume CAS 抢占 / 阶段超时取消传播 / 属性写入者护栏 / TaskChainListener SPI——139 单测全绿
+- [x] **登录设备互踢（2026-11-08）**：设备指针（`login:device:{userId}:{deviceId}`）+ Lua 原子「踢旧会话 + 换指针」，登出补完；压测直写 token 无 deviceId 字段，热路径零额外开销——147 单测全绿
 - [ ] 对账数据源纳入 Redis 预扣追踪日志，覆盖"无 DB 留痕"漂移
 - [ ] Agent 评估体系（回答准确率/工具调用成功率）
 - [ ] 多实例部署下的定时任务分布式调度（当前单机 `@Scheduled`；多实例兼容性盘点见 README 面经口径——布隆/缓存/消费端已就绪，仅缺 Job 调度锁）

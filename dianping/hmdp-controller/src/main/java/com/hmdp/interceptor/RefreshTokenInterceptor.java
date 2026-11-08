@@ -86,6 +86,14 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
         UserDTO userDTO = BeanUtil.fillBeanWithMap(map, new UserDTO(), false);
         // 6. 塞进 ThreadLocal —— 后续 LoginInterceptor、Controller 随时可取当前用户
         UserHolder.saveUser(userDTO);
+        // 6.5 设备指针与 token 同生命周期：会话活跃时同步续期指针 TTL，保证
+        //     "同设备重复登录互踢"的锚点在会话存活期内始终有效。仅登录接口写入的
+        //     会话才带 deviceId 字段；压测脚本直写的 token 走原有两步、零额外开销。
+        Object deviceIdField = map.get("deviceId");
+        if (deviceIdField != null && userDTO.getId() != null) {
+            stringRedisTemplate.expire(RedisConstants.LOGIN_DEVICE_KEY + userDTO.getId() + ":" + deviceIdField,
+                    30, TimeUnit.MINUTES);
+        }
         // 7. 刷新 Token 有效期 30 分钟 —— "活跃用户永不过期"语义的关键一步
         stringRedisTemplate.expire(userKey, 30, TimeUnit.MINUTES);
         return true;

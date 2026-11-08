@@ -33,6 +33,9 @@
 
     <properties>
         <java.version>21</java.version>
+        <!-- 覆写 Boot 3.2.12 默认的 byte-buddy：本机开发环境为 JDK 25，旧版 Byte Buddy 只支持到 Java 23，
+             Mockito 内联 mock 会在类改造时直接抛错；1.17.x 官方支持 Java 25，向下兼容 JDK 21 不受影响 -->
+        <byte-buddy.version>1.17.7</byte-buddy.version>
         <lombok.version>1.18.42</lombok.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <hutool.version>5.8.27</hutool.version>

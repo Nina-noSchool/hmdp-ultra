@@ -5,6 +5,8 @@ public class RedisConstants {
     public static final Long LOGIN_CODE_TTL = 2L;
     public static final String LOGIN_USER_KEY = "login:token:";
     public static final Long LOGIN_USER_TTL = 36000L;
+    /** 登录设备指针：login:device:{userId}:{deviceId} → 该设备当前生效的 token（设备互踢锚点） */
+    public static final String LOGIN_DEVICE_KEY = "login:device:";
 
     public static final Long CACHE_NULL_TTL = 2L;
 
