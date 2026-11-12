@@ -19,12 +19,15 @@ import jakarta.annotation.Resource;
  *     ↓ 读取 reconcile_task → 执行自动修复
  * }</pre></p>
  *
- * <p>扫描 Service 做双向对账（scanRecentRecords 内部分两步）：
+ * <p>扫描 Service 做三向对账（scanRecentRecords 内部分三步）：
  * <ul>
  *   <li><b>scanOrders</b>：查订单表中创建时间 ≥ scanDelayMinutes（默认 3 分钟前）的订单，
  *       逐条核对是否存在对应的 Redis 扣库存日志；有订单无日志 → ORDER_PRESENT_DEDUCT_MISSING</li>
  *   <li><b>scanDeductLogs</b>：查扣库存日志，逐条核对是否存在对应的订单；
  *       有日志无订单 → DEDUCT_PRESENT_ORDER_MISSING</li>
+ *   <li><b>scanTraceLogs</b>（默认关，开关 seckill.reconcile.trace-scan-enabled）：以 Redis 追踪日志
+ *       seckill:trace:log:{voucherId} 为主视角（SCAN + HSCAN 游标分批，单轮限量），
+ *       找"Redis 已扣、DB 完全无痕"的幽灵预占 → REDIS_DEDUCT_PRESENT_DB_MISSING，只发现转人工</li>
  * </ul>
  *
  * <p>scanDelayMinutes 的意义：给 MQ / Listener 留出建单时间，避免把"正在建单中"的正常情况误判为异常。</p>

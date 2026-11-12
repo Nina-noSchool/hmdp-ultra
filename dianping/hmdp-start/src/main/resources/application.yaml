@@ -85,6 +85,10 @@ seckill:
     scan-delay-minutes: 3
     compensation-max-retry-count: 5
     compensation-retry-delay-seconds: 30
+    # ===== 第三对账方向（默认关）：以 Redis 追踪日志为主视角找"Redis 已扣、DB 无痕"幽灵预占 =====
+    # SCAN + HSCAN 游标分批（禁 KEYS/HGETALL），单轮 field 预算 = scan-batch-size；
+    # 只发现转人工（REDIS_DEDUCT_PRESENT_DB_MISSING），不给它开自动补偿
+    trace-scan-enabled: false
   # ===== 批次1 ①：秒杀入口滑动窗口限流（可开关，供压测对比实验） =====
   rate-limit:
     sliding-window:
