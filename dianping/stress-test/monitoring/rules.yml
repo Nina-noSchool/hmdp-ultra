@@ -1,0 +1,17 @@
+# 秒杀对账告警规则（追踪日志方向心跳 —— 对账边界第 3 层）
+# 生效副本：VM /home/dev/hmdp-infra/monitoring/rules.yml（prometheus-rules-prov 挂载为容器内 /etc/prometheus/rules.yml）
+# 修改后热加载：docker kill -s SIGHUP hmdp-prometheus；验证：GET http://<prom>:9090/api/v1/rules
+groups:
+  - name: hmdp-reconcile-trace-scan
+    rules:
+      - alert: TraceScanHeartbeatLost
+        # 心跳口径：hmdp.reconcile.trace.scan.idle.seconds = 距最近一轮追踪扫描成功过的秒数，
+        # 15s/轮正常 < 30s；300s = 20 轮余量。持续增大 = 扫描器死亡 / Redis 不可达，
+        # "Redis 已扣、DB 无痕"的幽灵预占盲区重新打开。
+        expr: hmdp_reconcile_trace_scan_idle_seconds > 300
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "追踪日志对账扫描心跳丢失"
+          description: "距最近一轮 Redis 追踪日志扫描成功已超过 300 秒。前提：实例已开启 seckill.reconcile.trace-scan-enabled=true（开关关闭时心跳有意不打卡，本告警在该部署形态下无意义）；应用进程整体宕机由 up 指标类告警另行覆盖，本规则只管'进程活着但扫描器死了'的静默形态。"

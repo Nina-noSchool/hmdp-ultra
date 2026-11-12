@@ -187,9 +187,14 @@ public class SeckillReconcileScanService {
                 budget = scanTraceLogKey(traceLogKey, budget);
             }
         } catch (Exception e) {
-            // Redis 整体异常（连接断开等）：本轮扫描放弃，等下一轮；不影响前两个 DB 方向的结果
+            // Redis 整体异常（连接断开等）：本轮扫描放弃，等下一轮；不影响前两个 DB 方向的结果。
+            // 心跳不打卡——idle gauge 持续增大，告警链路据此发现"扫描器死亡"
             log.warn("trace log scan aborted, will retry next round", e);
+            return;
         }
+        // 本轮完整跑完（单 key 失败被 scanTraceLogKey 内部吸收，不算整轮失败）→ 心跳打卡，
+        // hmdp.reconcile.trace.scan.idle.seconds 归零；告警规则盯它的持续增大
+        metricsRecorder.markTraceScanSuccess();
     }
 
     /**

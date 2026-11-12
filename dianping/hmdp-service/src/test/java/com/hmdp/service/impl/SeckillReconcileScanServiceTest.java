@@ -308,6 +308,77 @@ class SeckillReconcileScanServiceTest {
         verify(taskMapper, never()).insert(any(SeckillReconcileTask.class));
     }
 
+    // ==================== 心跳告警：trace-scan 的存活可观测 ====================
+
+    @Test
+    void traceScan_shouldMarkHeartbeatOnSuccessfulRound() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        MetricsRecorder recorder = new MetricsRecorder(registry);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        SeckillReconcileScanService service = newService(recorder, redisTemplate, true);
+
+        String oldTs = String.valueOf(System.currentTimeMillis() - 10 * 60_000L);
+        stubTraceScan(redisTemplate, mockHashOps(),
+                Map.<Object, Object>entry(GHOST_TRACE_ID, deductEntry(GHOST_TRACE_ID, "999", oldTs)));
+
+        double idleBefore = idleSeconds(registry);
+        // 未成功过：age ≈ now - 0（天文数字），语义即"从未活着"
+        assertTrue(idleBefore > 1_000_000_000.0);
+
+        service.scanRecentRecords();
+
+        // 成功一轮 → 心跳归零（age 落到秒级）
+        assertTrue(idleSeconds(registry) < 60.0);
+    }
+
+    @Test
+    void traceScan_shouldNotMarkHeartbeatWhenRoundAborts() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        MetricsRecorder recorder = new MetricsRecorder(registry);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        SeckillReconcileScanService service = newService(recorder, redisTemplate, true);
+        // SCAN 整轮失败（Redis 不可达形态）→ 本轮放弃，心跳不打卡（gauge 持续增大触发告警）
+        when(redisTemplate.scan(any(ScanOptions.class))).thenThrow(new RuntimeException("redis down"));
+
+        service.scanRecentRecords();
+
+        assertTrue(idleSeconds(registry) > 1_000_000_000.0);
+    }
+
+    @Test
+    void traceScan_shouldNotMarkHeartbeatWhenDisabled() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        MetricsRecorder recorder = new MetricsRecorder(registry);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        VoucherOrderMapper orderMapper = mock(VoucherOrderMapper.class);
+        VoucherReconcileLogMapper logMapper = mock(VoucherReconcileLogMapper.class);
+        SeckillReconcileScanService service = new SeckillReconcileScanService(
+                mock(SeckillReconcileTaskMapper.class), orderMapper, logMapper, recorder, redisTemplate,
+                100, 3, 5, false, false);
+        when(orderMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(logMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        service.scanRecentRecords();
+
+        // 开关关闭 = 有意不扫：心跳不打卡，告警规则在此部署形态下应保持静默
+        assertTrue(idleSeconds(registry) > 1_000_000_000.0);
+        verify(redisTemplate, never()).scan(any(ScanOptions.class));
+    }
+
+    /** 指定 recorder/redis/开关的构造辅助（心跳用例需要独立的 MeterRegistry 断言 gauge 值） */
+    private SeckillReconcileScanService newService(MetricsRecorder recorder,
+                                                   StringRedisTemplate redisTemplate,
+                                                   boolean traceScanEnabled) {
+        return new SeckillReconcileScanService(
+                mock(SeckillReconcileTaskMapper.class), mock(VoucherOrderMapper.class),
+                mock(VoucherReconcileLogMapper.class), recorder, redisTemplate,
+                100, 3, 5, false, traceScanEnabled);
+    }
+
+    private double idleSeconds(SimpleMeterRegistry registry) {
+        return registry.get("hmdp.reconcile.trace.scan.idle.seconds").gauge().value();
+    }
+
     // ==================== 打桩辅助 ====================
 
     @SuppressWarnings("unchecked")

@@ -1,8 +1,11 @@
 package com.hmdp.metrics;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Component;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 业务指标登记处（批次2 ③）—— 把"可靠性事件"变成 Prometheus 可查询的数字。
@@ -38,6 +41,12 @@ public class MetricsRecorder {
     private final Counter reconcileAnomaly;
     private final Counter ratelimitRejected;
     private final Counter consumeBatchError;
+    /**
+     * 追踪日志对账扫描最近一轮成功的时刻（epoch millis，0 = 从未成功）。
+     * 心跳告警的数据源：配套 gauge 报告"距上一轮成功过了多少秒"，
+     * 持续增大 = 扫描器死亡 / Redis 不可达，幽灵预占盲区正在重新打开。
+     */
+    private final AtomicLong traceScanLastSuccessMillis = new AtomicLong(0L);
 
     public MetricsRecorder(MeterRegistry registry) {
         this.mqEventPersisted = counter(registry, "hmdp.mq.event.persisted", "MQ发送失败落本地消息表次数");
@@ -47,6 +56,12 @@ public class MetricsRecorder {
         this.reconcileAnomaly = counter(registry, "hmdp.reconcile.anomaly", "对账扫描产生的异常工单数");
         this.ratelimitRejected = counter(registry, "hmdp.ratelimit.rejected", "滑动窗口限流拒绝请求数");
         this.consumeBatchError = counter(registry, "hmdp.consume.batch.error", "消费端批量处理单条异常次数");
+        // 心跳 gauge：以 AtomicLong 为状态源（本类字段强引用持有，规避 micrometer 弱引用回收）。
+        // 0 时刻注册保证 Prometheus 侧无空窗；从未成功时 age ≈ now - 0（天文数字），语义即"从未活着"
+        Gauge.builder("hmdp.reconcile.trace.scan.idle.seconds", traceScanLastSuccessMillis,
+                        last -> (System.currentTimeMillis() - last.get()) / 1000.0)
+                .description("距最近一轮追踪日志扫描成功过的秒数（正常 < 扫描间隔×2；持续增大=扫描器死亡）")
+                .register(registry);
     }
 
     private static Counter counter(MeterRegistry registry, String name, String description) {
@@ -76,6 +91,11 @@ public class MetricsRecorder {
     /** 对账双向扫描产生一条异常工单（查重后新建时计数） */
     public void incReconcileAnomaly() {
         reconcileAnomaly.increment();
+    }
+
+    /** 追踪日志对账扫描一轮成功完成（心跳）——hmdp.reconcile.trace.scan.idle.seconds 据此归零 */
+    public void markTraceScanSuccess() {
+        traceScanLastSuccessMillis.set(System.currentTimeMillis());
     }
 
     /** 滑动窗口限流拒绝一次秒杀请求（429） */
