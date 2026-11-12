@@ -245,15 +245,19 @@ public class SeckillReconcileScanService {
         }
         // Redis 有 DEDUCT、DB 侧完全无痕 → 幽灵预占。
         // orderId 显式传 null：DB 没有订单时它不能作为查重定位键（走 traceId 分支），
-        // 真实 orderId 进 detail 供人工排查；一律 pending 转人工，不做自动补偿
+        // 真实 orderId 进 detail 供人工排查；一律 pending 转人工，不做自动补偿。
+        // 证据随工单走：完整追踪快照（beforeQty/afterQty/ts）拼进 detail——
+        // 追踪日志 TTL 只有 2 天，人工介入时 Redis 侧可能已过期，工单是唯一持久凭证
         log.info("redis deduct trace without db record: key={} traceId={} orderId={}",
                 traceLogKey, entry.getTraceId(), entry.getOrderId());
+        String rawSnapshot = rawValue instanceof String s ? s : String.valueOf(rawValue);
         createTaskIfAbsent(SeckillReconcileAnomalyType.REDIS_DEDUCT_PRESENT_DB_MISSING,
                 null,
                 entry.getUserId(),
                 entry.getVoucherId(),
                 entry.getTraceId(),
-                "redis deduct trace present but no db order/reconcile log; orderId=" + entry.getOrderId());
+                "redis deduct trace present but no db order/reconcile log; orderId=" + entry.getOrderId()
+                        + "; traceSnapshot=" + rawSnapshot);
     }
 
     /**

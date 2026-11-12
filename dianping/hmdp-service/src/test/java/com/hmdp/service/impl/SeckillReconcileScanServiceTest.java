@@ -273,6 +273,10 @@ class SeckillReconcileScanServiceTest {
         assertEquals(GHOST_TRACE_ID, task.getTraceId());
         assertEquals(21L, task.getVoucherId());
         assertTrue(task.getAnomalyDetail().contains("orderId=999"));
+        // 证据随工单走：完整追踪快照进 detail（追踪日志 TTL 2 天，人工介入时 Redis 侧可能已过期）
+        assertTrue(task.getAnomalyDetail().contains("\"traceId\":\"" + GHOST_TRACE_ID + "\""));
+        assertTrue(task.getAnomalyDetail().contains("\"beforeQty\":5"));
+        assertTrue(task.getAnomalyDetail().contains("\"afterQty\":4"));
         // reconcileNo 兜底用 traceId（orderId 为 null）
         assertTrue(task.getReconcileNo().contains(GHOST_TRACE_ID));
     }
